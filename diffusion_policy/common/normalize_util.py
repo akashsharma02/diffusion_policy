@@ -44,6 +44,9 @@ def get_identity_normalizer_from_stat(stat):
         input_stats_dict=stat
     )
 
+def get_identity_normalizer():
+    return SingleFieldLinearNormalizer.create_identity()
+
 def robomimic_abs_action_normalizer_from_stat(stat, rotation_transformer):
     result = dict_apply_split(
         stat, lambda x: {

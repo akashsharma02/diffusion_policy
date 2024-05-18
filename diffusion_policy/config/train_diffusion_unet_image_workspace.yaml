@@ -95,7 +95,7 @@ optimizer:
 training:
   device: "cuda:0"
   seed: 42
-  debug: False
+  debug: True
   resume: True
   # optimization
   lr_scheduler: cosine
@@ -104,7 +104,7 @@ training:
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
-  use_ema: True
+  use_ema: False
   freeze_encoder: False
   # training loop control
   # in epochs

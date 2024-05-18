@@ -32,7 +32,7 @@ policy:
   _target_: diffusion_policy.policy.diffusion_unet_image_policy.DiffusionUnetImagePolicy
 
   shape_meta: ${shape_meta}
-  
+
   noise_scheduler:
     _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
     num_train_timesteps: 100
@@ -47,18 +47,14 @@ policy:
     prediction_type: epsilon # or sample
 
   obs_encoder:
-    _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
-    shape_meta: ${shape_meta}
-    rgb_model:
-      _target_: diffusion_policy.model.vision.model_getter.get_resnet
-      name: resnet18
-      weights: null
-    resize_shape: [240, 320]
-    crop_shape: [216, 288] # ch, cw 240x320 90%
-    random_crop: True
-    use_group_norm: True
-    share_rgb_model: False
-    imagenet_norm: True
+    _target_: diffusion_policy.model.vision.tactile_obs_encoder.TactileObsEncoder
+    encoder:
+      _target_: diffusion_policy.model.tactile_ssl.general.vision_transformer.vit_base
+      in_chans: 6
+      pos_embed_fn: sinusoidal
+    embed_dim: 768
+    checkpoint_encoder: "/media/chiguera/2TB/tactile_ssl_models/encoders/gelsight_mae_vitbase.pth"
+    train_encoder: False
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
@@ -66,8 +62,12 @@ policy:
   num_inference_steps: 100
   obs_as_global_cond: ${obs_as_global_cond}
   # crop_shape: null
+  # diffusion_step_embed_dim: 128
+  # down_dims: [512, 1024, 2048]
+  # kernel_size: 5
+  # n_groups: 8
   diffusion_step_embed_dim: 128
-  down_dims: [512, 1024, 2048]
+  down_dims: [256, 512, 1024]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
@@ -109,7 +109,7 @@ optimizer:
 training:
   device: "cuda:0"
   seed: 42
-  debug: False
+  debug: True
   resume: True
   # optimization
   lr_scheduler: cosine
@@ -119,7 +119,7 @@ training:
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
   use_ema: True
-  freeze_encoder: False
+  freeze_encoder: True
   # training loop control
   # in epochs
   rollout_every: 50

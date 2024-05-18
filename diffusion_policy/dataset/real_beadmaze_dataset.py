@@ -25,7 +25,7 @@ from diffusion_policy.real_world.real_data_conversion import real_data_to_replay
 from diffusion_policy.common.normalize_util import (
     get_range_normalizer_from_stat,
     get_image_range_normalizer,
-    get_identity_normalizer_from_stat,
+    get_identity_normalizer,
     array_to_stats
 )
 
@@ -173,8 +173,8 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         self.replay_buffer = replay_buffer
         self.sampler = sampler
         self.shape_meta = shape_meta
-        self.rgb_keys = rgb_keys
-        self.lowdim_keys = lowdim_keys
+        self.rgb_keys = ['digit_thumb', 'digit_index'] #rgb_keys
+        self.lowdim_keys = ['robot_joint', 'allegro_joint'] #lowdim_keys
         self.n_obs_steps = n_obs_steps
         self.val_mask = val_mask
         self.horizon = horizon
@@ -218,6 +218,8 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         # action
         normalizer['action'] = SingleFieldLinearNormalizer.create_fit(
             self.replay_buffer['action'])
+        normalizer['allegro_action'] = SingleFieldLinearNormalizer.create_fit(
+            self.replay_buffer['allegro_action'])
         
         # obs
         for key in self.lowdim_keys:
@@ -226,7 +228,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         
         # image
         for key in self.rgb_keys:
-            normalizer[key] = get_image_range_normalizer()
+            normalizer[key] = get_identity_normalizer()
         return normalizer
 
     def get_all_actions(self) -> torch.Tensor:
@@ -260,35 +262,38 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         return output
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        threadpool_limits(1)
-        data = self.sampler.sample_sequence(idx)
+        try:
+            threadpool_limits(1)
+            data = self.sampler.sample_sequence(idx)
 
-        T_slice = slice(self.n_obs_steps)
+            T_slice = slice(self.n_obs_steps)
 
-        rgb_keys = ['digit_thumb', 'digit_index']
-        robot_keys = ['robot_joint', 'allegro_joint']
-        obs_dict = dict()
-        for key in rgb_keys:
-            obs_dict[key] = self._get_tactile_images(data[key], T_slice, bg=None)
-            del data[key]
-        for key in robot_keys:
-            obs_dict[key] = data[key][T_slice].astype(np.float32)
-            del data[key]
-        
-        action = data['action'].astype(np.float32)
-        allegro_action = data['allegro_action'].astype(np.float32)
-        # handle latency by dropping first n_latency_steps action
-        # observations are already taken care of by T_slice
-        if self.n_latency_steps > 0:
-            action = action[self.n_latency_steps:]
-            allegro_action = allegro_action[self.n_latency_steps:]
+            # rgb_keys = ['digit_thumb', 'digit_index']
+            # lowdim_keys = ['robot_joint', 'allegro_joint']
+            obs_dict = dict()
+            for key in self.rgb_keys:
+                obs_dict[key] = self._get_tactile_images(data[key], T_slice, bg=None)
+                del data[key]
+            for key in self.lowdim_keys:
+                obs_dict[key] = data[key][T_slice].astype(np.float32)
+                del data[key]
+            
+            action = data['action'].astype(np.float32)
+            allegro_action = data['allegro_action'].astype(np.float32)
+            # handle latency by dropping first n_latency_steps action
+            # observations are already taken care of by T_slice
+            if self.n_latency_steps > 0:
+                action = action[self.n_latency_steps:]
+                allegro_action = allegro_action[self.n_latency_steps:]
 
-        torch_data = {
-            'obs': obs_dict,
-            'action': torch.from_numpy(action),
-            'allegro_action': torch.from_numpy(allegro_action)
-        }
-        return torch_data
+            torch_data = {
+                'obs': obs_dict,
+                'action': torch.from_numpy(action),
+                'allegro_action': torch.from_numpy(allegro_action)
+            }
+            return torch_data
+        except:
+            return self.__getitem__(np.clip(idx+1, 0, len(self)-1))
 
 def zarr_resize_index_last_dim(zarr_arr, idxs):
     actions = zarr_arr[:]

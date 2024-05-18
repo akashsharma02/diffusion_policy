@@ -278,11 +278,16 @@ def test():
     from omegaconf import OmegaConf
     OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-    with hydra.initialize('../diffusion_policy/config'):
-        cfg = hydra.compose('train_robomimic_real_image_workspace')
+    with hydra.initialize('../config'):
+        cfg = hydra.compose('train_diffusion_unet_real_image_workspace')
         OmegaConf.resolve(cfg)
         dataset = hydra.utils.instantiate(cfg.task.dataset)
 
+    for i in range(len(dataset)):
+        data = dataset[i]
+        print(i, data['obs']['camera_1'].shape, data['action'].shape)
+
+    data = dataset[0]
     from matplotlib import pyplot as plt
     normalizer = dataset.get_normalizer()
     nactions = normalizer['action'].normalize(dataset.replay_buffer['action'][:])

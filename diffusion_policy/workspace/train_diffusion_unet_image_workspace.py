@@ -139,7 +139,7 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         train_sampling_batch = None
 
         if cfg.training.debug:
-            cfg.training.num_epochs = 2
+            cfg.training.num_epochs = 5
             cfg.training.max_train_steps = 3
             cfg.training.max_val_steps = 3
             cfg.training.rollout_every = 1

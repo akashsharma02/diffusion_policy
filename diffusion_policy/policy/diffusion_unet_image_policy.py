@@ -57,6 +57,7 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         )
 
         self.obs_encoder = obs_encoder
+   
         self.model = model
         self.noise_scheduler = noise_scheduler
         self.mask_generator = LowdimMaskGenerator(
@@ -78,7 +79,8 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
         self.num_inference_steps = num_inference_steps
-    
+
+        
     # ========= inference  ============
     def conditional_sample(self, 
             condition_data, condition_mask,

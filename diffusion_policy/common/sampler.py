@@ -123,6 +123,7 @@ class SequenceSampler:
         buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx \
             = self.indices[idx]
         buffer_start_idx += 7
+        sample_end_idx = sample_end_idx - 7
         result = dict()
         for key in self.keys:
             input_arr = self.replay_buffer[key]
@@ -142,13 +143,14 @@ class SequenceSampler:
                 except Exception as e:
                     import pdb; pdb.set_trace()
             data = sample
-            if (sample_start_idx > 0) or (sample_end_idx < self.sequence_length):
+            
+            if (sample_start_idx > 0) or (sample_end_idx < (self.sequence_length-7)):
                 data = np.zeros(
                     shape=(self.sequence_length-7,) + input_arr.shape[1:],
                     dtype=input_arr.dtype)
                 if sample_start_idx > 0:
                     data[:sample_start_idx] = sample[0]
-                if sample_end_idx < self.sequence_length:
+                if sample_end_idx < (self.sequence_length-7):
                     data[sample_end_idx:] = sample[-1]
                 data[sample_start_idx:sample_end_idx] = sample
             result[key] = data

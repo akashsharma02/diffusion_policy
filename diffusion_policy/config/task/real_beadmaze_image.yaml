@@ -25,8 +25,8 @@ shape_meta: &shape_meta
     shape: [16]
 
 env_runner:
-  # _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
-  _target_: ~
+  _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
+  # _target_: ~
 
 dataset:
   _target_: diffusion_policy.dataset.real_beadmaze_dataset.RealBeadMazeImageDataset
