@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: lift_image_abs
+  - task: real_beadmaze_image
 
 name: train_diffusion_unet_image
 _target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
@@ -18,35 +18,43 @@ past_action_visible: False
 keypoint_visible_rate: 1.0
 obs_as_global_cond: True
 
+tactile_input:
+  out_format: "concat_ch_img" # ["video", "concat_ch_img"  "single_image"]
+  num_frames: 2 # num frames in input (for video and concat_ch_img format)
+  frame_stride: 5  # temporal stride between frames in input 
+
+# tactile_input:
+#   out_format: "video" # ["video", "concat_ch_img"  "single_image"]
+#   num_frames: 4 # num frames in input (for video and concat_ch_img format)
+#   frame_stride: 2  # temporal stride between frames in input 
+
 policy:
   _target_: diffusion_policy.policy.diffusion_unet_image_policy.DiffusionUnetImagePolicy
 
   shape_meta: ${shape_meta}
-  
+
   noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
+    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
     num_train_timesteps: 100
     beta_start: 0.0001
     beta_end: 0.02
+    # beta_schedule is important
+    # this is the best we found
     beta_schedule: squaredcos_cap_v2
-    variance_type: fixed_small # Yilun's paper uses fixed_small_log instead, but easy to cause Nan
-    clip_sample: True # required when predict_epsilon=False
+    clip_sample: True
+    set_alpha_to_one: True
+    steps_offset: 0
     prediction_type: epsilon # or sample
 
   obs_encoder:
-    _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
-    shape_meta: ${shape_meta}
-    rgb_model:
-      _target_: diffusion_policy.model.vision.model_getter.get_resnet
-      name: resnet18
-      weights: null
-    resize_shape: null
-    crop_shape: [76, 76]
-    # constant center crop
-    random_crop: True
-    use_group_norm: True
-    share_rgb_model: False
-    imagenet_norm: True
+    _target_: diffusion_policy.model.vision.tactile_obs_encoder.TactileObsEncoder
+    encoder:
+      _target_: diffusion_policy.model.tactile_ssl.general.vision_transformer.vit_base
+      in_chans: 6
+      pos_embed_fn: sinusoidal
+    embed_dim: 768
+    checkpoint_encoder: "/media/chiguera/2TB/tactile_ssl_models/encoders/gelsight_mae_vitbase.pth"
+    train_encoder: False
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
@@ -54,8 +62,12 @@ policy:
   num_inference_steps: 100
   obs_as_global_cond: ${obs_as_global_cond}
   # crop_shape: null
+  # diffusion_step_embed_dim: 128
+  # down_dims: [512, 1024, 2048]
+  # kernel_size: 5
+  # n_groups: 8
   diffusion_step_embed_dim: 128
-  down_dims: [512, 1024, 2048]
+  down_dims: [256, 512, 1024]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
@@ -72,18 +84,20 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 64
-  num_workers: 4
+  # batch_size: 64
+  batch_size: 5
+  num_workers: 8
   shuffle: True
   pin_memory: True
-  persistent_workers: False
+  persistent_workers: True
 
 val_dataloader:
-  batch_size: 64
-  num_workers: 4
+  # batch_size: 64
+  batch_size: 5
+  num_workers: 8
   shuffle: False
   pin_memory: True
-  persistent_workers: False
+  persistent_workers: True
 
 optimizer:
   _target_: torch.optim.AdamW
@@ -95,17 +109,16 @@ optimizer:
 training:
   device: "cuda:0"
   seed: 42
-  debug: True
+  debug: False
   resume: True
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 8000
+  num_epochs: 600
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
-  use_ema: False
-  freeze_encoder: False
+  use_ema: True
   # training loop control
   # in epochs
   rollout_every: 50
@@ -129,10 +142,10 @@ logging:
 
 checkpoint:
   topk:
-    monitor_key: test_mean_score
-    mode: max
+    monitor_key: train_loss
+    mode: min
     k: 5
-    format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt'
+    format_str: 'epoch={epoch:04d}-train_loss={train_loss:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

@@ -139,7 +139,7 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         train_sampling_batch = None
 
         if cfg.training.debug:
-            cfg.training.num_epochs = 2
+            cfg.training.num_epochs = 5
             cfg.training.max_train_steps = 3
             cfg.training.max_val_steps = 3
             cfg.training.rollout_every = 1
@@ -153,9 +153,6 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
             for local_epoch_idx in range(cfg.training.num_epochs):
                 step_log = dict()
                 # ========= train for this epoch ==========
-                if cfg.training.freeze_encoder:
-                    self.model.obs_encoder.eval()
-                    self.model.obs_encoder.requires_grad_(False)
 
                 train_losses = list()
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}", 

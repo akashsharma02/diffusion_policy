@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import zarr
 import os
+import io
 import shutil
 from filelock import FileLock
 from threadpoolctl import threadpool_limits
@@ -11,6 +12,9 @@ import cv2
 import json
 import hashlib
 import copy
+from PIL import Image
+from torchvision import transforms
+
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.model.common.normalizer import LinearNormalizer, SingleFieldLinearNormalizer
@@ -21,11 +25,42 @@ from diffusion_policy.real_world.real_data_conversion import real_data_to_replay
 from diffusion_policy.common.normalize_util import (
     get_range_normalizer_from_stat,
     get_image_range_normalizer,
-    get_identity_normalizer_from_stat,
+    get_identity_normalizer,
     array_to_stats
 )
 
-class RealPushTImageDataset(BaseImageDataset):
+def compute_diff(img1, img2, offset=0.0):
+    img1 = np.int32(img1)
+    img2 = np.int32(img2)
+    diff = img1 - img2
+    diff = diff / 255.0 + offset
+    diff = np.clip(diff, 0.0, 1.0)
+    diff = np.uint8(diff * 255.0)
+    return diff
+
+def load_sample_from_buf(io_buf, img_bg=None):
+    img = load_bin_image(io_buf)
+    if img_bg is not None:
+        img = compute_diff(img, img_bg, offset=0.5)
+    img = Image.fromarray(img)
+    return img.convert("RGB")
+
+
+def load_bin_image(io_buf):
+    img = Image.open(io.BytesIO(io_buf))
+    img = np.array(img)
+    return img
+
+def get_resize_transform(img_size=(224,224)):
+    t = transforms.Compose(
+        [
+            transforms.Resize((img_size[0], img_size[1]), antialias=True),
+            transforms.ToTensor(),  # converts to [0 - 1]
+        ]
+    )
+    return t
+
+class RealBeadMazeImageDataset(BaseImageDataset):
     def __init__(self,
             shape_meta: dict,
             dataset_path: str,
@@ -39,8 +74,10 @@ class RealPushTImageDataset(BaseImageDataset):
             val_ratio=0.0,
             max_train_episodes=None,
             delta_action=False,
+            tactile_input: str={},
         ):
         assert os.path.isdir(dataset_path)
+        
         
         replay_buffer = None
         if use_cache:
@@ -136,14 +173,32 @@ class RealPushTImageDataset(BaseImageDataset):
         self.replay_buffer = replay_buffer
         self.sampler = sampler
         self.shape_meta = shape_meta
-        self.rgb_keys = rgb_keys
-        self.lowdim_keys = lowdim_keys
+        self.rgb_keys = ['digit_thumb', 'digit_index'] #rgb_keys
+        self.lowdim_keys = ['robot_joint', 'allegro_joint'] #lowdim_keys
         self.n_obs_steps = n_obs_steps
         self.val_mask = val_mask
         self.horizon = horizon
         self.n_latency_steps = n_latency_steps
         self.pad_before = pad_before
         self.pad_after = pad_after
+        self.img_loader = load_sample_from_buf
+        self.transform_resize = get_resize_transform()
+
+        self.out_format = tactile_input['out_format']  # if output video
+        assert self.out_format in [
+            "video",
+            "concat_ch_img",
+            "single_image",
+        ], ValueError(
+            "out_format should be 'video' or 'concat_ch_img' or 'single_image'"
+        )
+        frame_stride = tactile_input['frame_stride']
+        self.num_frames = (
+            1 if self.out_format == "single_image" else tactile_input['num_frames']
+        )
+        self.frames_concat_idx = np.arange(
+            0, self.num_frames * frame_stride, frame_stride
+        )
 
     def get_validation_dataset(self):
         val_set = copy.copy(self)
@@ -163,6 +218,8 @@ class RealPushTImageDataset(BaseImageDataset):
         # action
         normalizer['action'] = SingleFieldLinearNormalizer.create_fit(
             self.replay_buffer['action'])
+        normalizer['allegro_action'] = SingleFieldLinearNormalizer.create_fit(
+            self.replay_buffer['allegro_action'])
         
         # obs
         for key in self.lowdim_keys:
@@ -171,7 +228,7 @@ class RealPushTImageDataset(BaseImageDataset):
         
         # image
         for key in self.rgb_keys:
-            normalizer[key] = get_image_range_normalizer()
+            normalizer[key] = get_identity_normalizer()
         return normalizer
 
     def get_all_actions(self) -> torch.Tensor:
@@ -180,42 +237,63 @@ class RealPushTImageDataset(BaseImageDataset):
     def __len__(self):
         return len(self.sampler)
 
+    def _get_tactile_images(self, data, T_slice, bg=None):
+        data_slice = []
+        for i in range(T_slice.stop):
+            idx_start = i + 7
+            sample_images = []
+            for i in self.frames_concat_idx:
+                idx_sample = idx_start - i
+                image = self.img_loader(data[idx_sample], bg)
+                image = self.transform_resize(image)
+                sample_images.append(image)
+
+            if self.out_format == "single_image":
+                output = sample_images[0]
+            elif self.out_format == "video":
+                output = torch.stack(sample_images, dim=0)
+                output = output.permute(1, 0, 2, 3)
+            elif self.out_format == "concat_ch_img":
+                output = torch.cat(sample_images, dim=0)
+            
+            data_slice.append(output)
+
+        output = torch.stack(data_slice, dim=0)
+        return output
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        threadpool_limits(1)
-        data = self.sampler.sample_sequence(idx)
+        try:
+            threadpool_limits(1)
+            data = self.sampler.sample_sequence(idx)
 
-        # to save RAM, only return first n_obs_steps of OBS
-        # since the rest will be discarded anyway.
-        # when self.n_obs_steps is None
-        # this slice does nothing (takes all)
-        T_slice = slice(self.n_obs_steps)
+            T_slice = slice(self.n_obs_steps)
 
-        obs_dict = dict()
-        for key in self.rgb_keys:
-            # move channel last to channel first
-            # T,H,W,C
-            # convert uint8 image to float32
-            obs_dict[key] = np.moveaxis(data[key][T_slice],-1,1
-                ).astype(np.float32) / 255.
-            # T,C,H,W
-            # save ram
-            del data[key]
-        for key in self.lowdim_keys:
-            obs_dict[key] = data[key][T_slice].astype(np.float32)
-            # save ram
-            del data[key]
-        
-        action = data['action'].astype(np.float32)
-        # handle latency by dropping first n_latency_steps action
-        # observations are already taken care of by T_slice
-        if self.n_latency_steps > 0:
-            action = action[self.n_latency_steps:]
+            # rgb_keys = ['digit_thumb', 'digit_index']
+            # lowdim_keys = ['robot_joint', 'allegro_joint']
+            obs_dict = dict()
+            for key in self.rgb_keys:
+                obs_dict[key] = self._get_tactile_images(data[key], T_slice, bg=None)
+                del data[key]
+            for key in self.lowdim_keys:
+                obs_dict[key] = data[key][T_slice].astype(np.float32)
+                del data[key]
+            
+            action = data['action'].astype(np.float32)
+            allegro_action = data['allegro_action'].astype(np.float32)
+            # handle latency by dropping first n_latency_steps action
+            # observations are already taken care of by T_slice
+            if self.n_latency_steps > 0:
+                action = action[self.n_latency_steps:]
+                allegro_action = allegro_action[self.n_latency_steps:]
 
-        torch_data = {
-            'obs': dict_apply(obs_dict, torch.from_numpy),
-            'action': torch.from_numpy(action)
-        }
-        return torch_data
+            torch_data = {
+                'obs': obs_dict,
+                'action': torch.from_numpy(action),
+                'allegro_action': torch.from_numpy(allegro_action)
+            }
+            return torch_data
+        except:
+            return self.__getitem__(np.clip(idx+1, 0, len(self)-1))
 
 def zarr_resize_index_last_dim(zarr_arr, idxs):
     actions = zarr_arr[:]
@@ -242,10 +320,10 @@ def _get_replay_buffer(dataset_path, shape_meta, store):
             lowdim_keys.append(key)
             lowdim_shapes[key] = tuple(shape)
             if 'pose' in key:
-                assert tuple(shape) in [(2,),(6,)]
+                assert tuple(shape) in [(2,),(6,),(7,),(16,)]
     
     action_shape = tuple(shape_meta['action']['shape'])
-    assert action_shape in [(2,),(6,)]
+    assert action_shape in [(2,),(6,),(7,),(16,)]
 
     # load data
     cv2.setNumThreads(1)
@@ -254,7 +332,7 @@ def _get_replay_buffer(dataset_path, shape_meta, store):
             dataset_path=dataset_path,
             out_store=store,
             out_resolutions=out_resolutions,
-            lowdim_keys=lowdim_keys + ['action'],
+            lowdim_keys=lowdim_keys + ['action'] + ['allegro_action'],
             image_keys=rgb_keys
         )
 
@@ -279,18 +357,32 @@ def test():
     OmegaConf.register_new_resolver("eval", eval, replace=True)
 
     with hydra.initialize('../config'):
-        cfg = hydra.compose('train_diffusion_unet_real_image_workspace')
+        cfg = hydra.compose('train_diffusion_unet_beadmaze_image_workspace')
         OmegaConf.resolve(cfg)
         dataset = hydra.utils.instantiate(cfg.task.dataset)
 
-    for i in range(len(dataset)):
-        data = dataset[i]
-        print(i, data['obs']['camera_1'].shape, data['action'].shape)
-
-    data = dataset[0]
     from matplotlib import pyplot as plt
-    normalizer = dataset.get_normalizer()
-    nactions = normalizer['action'].normalize(dataset.replay_buffer['action'][:])
-    diff = np.diff(nactions, axis=0)
-    dists = np.linalg.norm(np.diff(nactions, axis=0), axis=-1)
-    _ = plt.hist(dists, bins=100); plt.title('real action velocity')
+    # normalizer = dataset.get_normalizer()
+    # nactions = normalizer['action'].normalize(dataset.replay_buffer['action'][:])
+    # diff = np.diff(nactions, axis=0)
+    # dists = np.linalg.norm(np.diff(nactions, axis=0), axis=-1)
+    # _ = plt.hist(dists, bins=100); plt.title('real action velocity')
+
+    
+    fig, ax = plt.subplots(1, 2, figsize=(10,10))
+    for i in range(len(dataset)):
+        ax[0].cla()
+        ax[1].cla()
+
+        torch_data = dataset[i]
+        img = torch_data['obs']['digit_index'][0].permute(1,2,0).numpy()[:,:,0:3]
+        ax[0].imshow(img)
+        ax[0].set_title(f"Index idx: {i}")
+
+        img = torch_data['obs']['digit_thumb'][0].permute(1,2,0).numpy()[:,:,0:3]
+        ax[1].imshow(img)
+        ax[1].set_title(f"Thumb idx: {i}")
+
+        plt.pause(0.01)
+    plt.show()
+    print('done')       
