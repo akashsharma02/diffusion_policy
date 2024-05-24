@@ -104,7 +104,9 @@ def main(ckpt_path: str, urdf_path: str):
 
     normalizer = dataset.get_normalizer()
     val_dataset = dataset.get_validation_dataset()
-
+    val_sampler = val_dataset.sampler
+    # replay_buffer = val_dataset.replay_buffer
+    # last_episode = replay_buffer.get_episode(replay_buffer.n_episodes - 1)
     policy.set_normalizer(normalizer)
     policy.eval().to(device)
     policy.reset()
@@ -115,10 +117,10 @@ def main(ckpt_path: str, urdf_path: str):
     predicted_joints = []
     gt_joints = []
     print(f"len(val_dataset): {len(val_dataset)}")
-    for i, data in enumerate(dataset):
-        if i > 500:
-            break
-
+    print(val_dataset.val_mask)
+    # Enumerating over val_dataset calls __next__ on the dataset which is problematic because it iterates over the full dataset
+    for i in range(len(val_dataset)):
+        data = val_dataset[i]
         obs_dict = data["obs"]
         obs_dict = dict_apply(
             obs_dict,
@@ -168,13 +170,28 @@ def main(ckpt_path: str, urdf_path: str):
 
     error = np.abs(gt_joints - predicted_joints)
     print(f"Mean error: {error.mean()}")
+    print(f"Position error: {pos_error.mean()}")
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
 
     # for pose_gt, pose_pred in zip(gt_traj, pred_traj):
-    draw_3d_axes(ax, gt_traj[::5], axis_length=2e-3, traj_color="b")
-    draw_3d_axes(ax, pred_traj[::5], axis_length=2e-3, traj_color="r")
+    draw_3d_axes(
+        ax,
+        gt_traj[::5],
+        axis_length=2e-3,
+        traj_color="b",
+    )
+    draw_3d_axes(
+        ax,
+        pred_traj[::5],
+        axis_length=2e-3,
+        traj_color="r",
+    )
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.set_title("End effector trajectory")
 
     set_equal_aspect_ratio_3D(ax, pos_gt[:, 0], pos_gt[:, 1], pos_gt[:, 2], alpha=1.5)
 

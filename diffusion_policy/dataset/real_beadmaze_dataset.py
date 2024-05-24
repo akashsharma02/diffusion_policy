@@ -167,7 +167,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         val_mask = get_val_mask(
             n_episodes=replay_buffer.n_episodes, val_ratio=val_ratio, seed=seed
         )
-        num_val_episodes = np.sum(val_mask)
+        print(f"val_mask: {val_mask}")
         train_mask = ~val_mask
         train_mask = downsample_mask(
             mask=train_mask, max_n=max_train_episodes, seed=seed
