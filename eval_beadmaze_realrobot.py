@@ -1,4 +1,5 @@
 from typing import Callable, Dict, Optional
+import collections
 
 import click
 import dill
@@ -75,32 +76,34 @@ def dict_apply(
             result[key] = func(value)
     return result
 
+
 class DiffusionPolicyNode(Node):
-    def __init__(self, node_name='DiffusionPolicyNode', policy, config, device) -> None:
-        super().__init__(node_name=node_name):
+    def __init__(self, policy, config, device) -> None:
+        super().__init__(node_name="DiffusionPolicyNode")
         self.device = device
         self.policy = policy
+        self.config = config
+
+        self.n_obs_steps = self.policy.n_obs_steps
+
+        self.index_digit_queue = collections.deque(maxlen=self.n_obs_steps * 2)
+        self.thumb_digit_queue = collections.deque(maxlen=self.n_obs_steps * 2)
+        self.joint_state_queue = collections.deque(maxlen=self.n_obs_steps)
 
         urdf_path = config.urdf_path
         self.fk_chain = pk.build_serial_chain_from_urdf(
             open(urdf_path).read(),
-            end_link_name='meta_hand_base_frame',
-            root_link_name='base_link'
+            end_link_name="meta_hand_base_frame",
+            root_link_name="base_link",
         )
-        self.fk_chain = self.fk_chain.to(device='cpu')
+        self.fk_chain = self.fk_chain.to(device="cpu")
 
         self.bridge = CvBridge()
         self.create_subscription(
-            CompressedImage,
-            self.config.index_topic,
-            self.index_callback,
-            1
+            CompressedImage, self.config.index_topic, self.index_callback, 1
         )
         self.create_subscription(
-            CompressedImage,
-            self.config.thumb_topic,
-            self.thumb_callback,
-            1
+            CompressedImage, self.config.thumb_topic, self.thumb_callback, 1
         )
         self.create_subscription(
             JointState,
@@ -108,7 +111,9 @@ class DiffusionPolicyNode(Node):
             self.franka_joint_state_callback,
             1,
         )
-        self.joint_state_publisher = self.create_publisher(JointState, self.config.joint_state_topic, 1)
+        self.joint_state_publisher = self.create_publisher(
+            JointState, self.config.joint_cmd_topic, 1
+        )
 
         self.timer = self.create_timer(0.01, self.on_timer)
         self.thumb_image = None
@@ -119,27 +124,37 @@ class DiffusionPolicyNode(Node):
         image = self.bridge.compressed_imgmsg_to_cv2(msg)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, (240, 320))
+        self.get_logger().debug(f"Received index image: {image.shape}")
         self.index_image = image
+        self.index_digit_queue.append(image)
 
     def thumb_callback(self, msg: CompressedImage):
         image = self.bridge.compressed_imgmsg_to_cv2(msg)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, (240, 320))
+        self.get_logger().debug(f"Received thumb image: {image.shape}")
         self.thumb_image = image
+        self.thumb_digit_queue.append(image)
 
     def franka_joint_state_callback(self, msg: JointState):
         self.curr_joint_angles = torch.tensor(msg.position).to(self.device)
+        self.joint_state_queue.append(msg.position)
 
     def on_timer(self):
-        if self.index_image is None or self.thumb_image is None:
+        if len(self.index_digit_queue) < self.n_obs_steps:
             return
-        if self.curr_joint_angles is None:
+        if len(self.thumb_digit_queue) < self.n_obs_steps:
             return
-
+        if len(self.joint_state_queue) < self.n_obs_steps:
+            return
+        # self.get_logger().info(f"Received index image: {self.index_image.shape}")
+        index_images = np.stack([image for image in self.index_digit_queue])
+        thumb_images = np.stack([image for image in self.thumb_digit_queue])
+        robot_joint = np.stack([joint for joint in self.joint_state_queue])
         obs_dict = {
-            'digit_index': self.index_image,
-            'digit_thumb': self.thumb_image,
-            'robot_joint': self.curr_joint_angles
+            "digit_index": index_images,
+            "digit_thumb": thumb_images,
+            "robot_joint": robot_joint,
         }
         obs_dict = dict_apply(
             obs_dict,
@@ -149,6 +164,8 @@ class DiffusionPolicyNode(Node):
                 else torch.from_numpy(x).unsqueeze(0).to(self.device)
             ),
         )
+        for key, val in obs_dict.items():
+            print(f"key: {key}, val: {val.shape}")
         result = self.policy.predict_action(obs_dict)
         action = result["action"][0].detach().to("cpu").numpy()
         executable_action = action[0]
@@ -158,19 +175,11 @@ class DiffusionPolicyNode(Node):
 
         header = Header(stamp=self.get_clock().now().to_msg())
         msg = JointState(
-            header=header,potition=desired_joint_angle, velocity=[], effort=[]
+            header=header, potition=desired_joint_angle, velocity=[], effort=[]
         )
         self.publisher.publish(msg)
 
 
-
-
-
-
-
-@click.command()
-@click.option("ckpt_path", "-i", required=True, help="Path to checkpoint")
-@click.option("urdf_path", "-u", required=True, help="Path to URDF file")
 def main(ckpt_path: str, urdf_path: str):
     rclpy.init()
     device = (
@@ -184,13 +193,16 @@ def main(ckpt_path: str, urdf_path: str):
     franka_urdf_chain = franka_urdf_chain.to(device="cpu")
     OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-    config = OmegaConf.create({
-        'ckpt_path': 'ckpt_path',
-        'urdf_path': 'urdf_path',
-        'index_topic': '/digit_index/compressed',
-        'thumb_topic': '/digit_thumb/compressed',
-        'joint_state_topic': '/joint_pos_cmd',
-    })
+    config = OmegaConf.create(
+        {
+            "ckpt_path": ckpt_path,
+            "urdf_path": urdf_path,
+            "index_topic": "/digit_index/compressed",
+            "thumb_topic": "/digit_thumb/compressed",
+            "joint_state_topic": "/franka/joint_states",
+            "joint_cmd_topic": "/joint_pos_cmd",
+        }
+    )
     payload = torch.load(open(ckpt_path, "rb"), pickle_module=dill)
     cfg = payload["cfg"]
     cls = hydra.utils.get_class(cfg._target_)
@@ -220,10 +232,6 @@ def main(ckpt_path: str, urdf_path: str):
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
-
-
-
-
 
     # obs_deque = collections.deque([obs] * obs_horizon, maxlen=obs_horizon)
 
@@ -299,5 +307,3 @@ def main(ckpt_path: str, urdf_path: str):
 
 if __name__ == "__main__":
     main()
-
-

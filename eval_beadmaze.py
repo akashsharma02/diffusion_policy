@@ -130,6 +130,8 @@ def main(ckpt_path: str, urdf_path: str):
                 else torch.from_numpy(x).unsqueeze(0).to(device)
             ),
         )
+        for key, val in obs_dict.items():
+            print(f"key: {key}, val: {val.shape}")
 
         result = policy.predict_action(obs_dict)
         action = result["action"][0].detach().to("cpu").numpy()

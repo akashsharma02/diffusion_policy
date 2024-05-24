@@ -1,0 +1,91 @@
+defaults:
+  - _self_
+  - override hydra/job_logging: disabled
+env:
+  name: tray_grasp
+  step_rate: 6.0
+  episode_length: 600
+  obs:
+    data_clients:
+      mhf_color_camera:
+        type:
+          module: data_clients.digit_client
+          class: DigitClient
+        args:
+          node_name: mhf_digit_index
+          slop: 0.01
+          queue_size: 10
+          img_shape: [320, 240, 3]
+          max_msg_dt: 0.1
+          finger_name: "index"
+          compressed: True
+        remappings:
+          from: [/mhf_digit_index/digit_index/compressed]
+          to: [/digit_index/compressed]
+        record: true
+
+      mhf_depth_camera:
+        type:
+          module: data_clients.digit_client
+          class: DigitClient
+        args:
+          node_name: mhf_digit_thumb
+          slop: 0.001
+          queue_size: 10
+          img_shape: [320, 240, 3]
+          max_msg_dt: 0.1
+          finger_name: "thumb"
+          compressed: True
+        remappings:
+          from: [/mhf_digit_thumb/digit_thumb/compressed]
+          to: [/digit_thumb/compressed]
+        record: true
+
+      mhf_joint_states:
+        type:
+          module: data_clients.joint_state_client
+          class: JointStateClient
+        args:
+          node_name: mhf_joint_states
+          slop: 0.001
+          queue_size: 2
+          n_joints: 23
+          max_msg_dt: 0.067
+        remappings:
+          from: [/mhf_joint_states/joint_states]
+          to: [/joint_states]
+        record: true
+
+      # mhf_transforms:
+      #   type:
+      #     module: data_clients.transform_client
+      #     class: TransformClient
+      #   args:
+      #     node_name: mhf_transforms
+      #     parent_frames: [base_link, realsense_color_optical_frame, base_link]
+      #     child_frames:
+      #       [
+      #         realsense_color_optical_frame,
+      #         realsense_depth_optical_frame,
+      #         meta_hand_tool_frame,
+      #       ]
+      #     wait: false
+      #     rate: 60.0
+      #     max_msg_dt: 0.1
+      #   remappings:
+      #     from: []
+      #     to: []
+      #   record: true
+
+seed: 42
+rl_device: "cuda:0"
+silent: false
+logging_dir: ./outputs/logs/
+ckpt_path: ./checkpoints/dino_unet/latest-006-003.ckpt
+urdf_path: ~/gum_ws/src/GUM/gum/devices/metahand/ros/meta_hand_description/urdf/meta_hand_franka.urdf
+
+# set the directory where the output files get saved
+hydra:
+  output_subdir: null
+  run:
+    dir: .
