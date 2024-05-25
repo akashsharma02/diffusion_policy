@@ -53,7 +53,7 @@ policy:
       in_chans: 6
       pos_embed_fn: sinusoidal
     embed_dim: 768
-    checkpoint_encoder: "checkpoints/gelsight_dino_vitbase.pth"
+    checkpoint_encoder: "checkpoints/gelsight_mae_vitbase.pth"
     train_encoder: False
 
   horizon: ${horizon}
@@ -84,16 +84,14 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  # batch_size: 64
-  batch_size: 16
+  batch_size: 128
   num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  # batch_size: 64
-  batch_size: 16
+  batch_size: 32
   num_workers: 8
   shuffle: False
   pin_memory: True
@@ -113,7 +111,7 @@ training:
   resume: True
   # optimization
   lr_scheduler: cosine
-  lr_warmup_steps: 25
+  lr_warmup_steps: 2500
   num_epochs: 100
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
@@ -121,8 +119,8 @@ training:
   use_ema: True
   # training loop control
   # in epochs
-  rollout_every: 50
-  checkpoint_every: 50
+  rollout_every: 10
+  checkpoint_every: 10
   val_every: 1
   sample_every: 5
   # steps per epoch
@@ -132,7 +130,7 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: diffusion_policy_debug
+  project: diffusion_policy
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}

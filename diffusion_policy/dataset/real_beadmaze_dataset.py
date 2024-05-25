@@ -278,7 +278,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         try:
-            threadpool_limits(1)
+            # threadpool_limits(1)
             data = self.sampler.sample_sequence(idx)
 
             T_slice = slice(self.n_obs_steps)
@@ -384,26 +384,27 @@ def test():
     normalizer = dataset.get_normalizer()
     nactions = normalizer["action"].normalize(dataset.replay_buffer["action"][:])
     dists = np.linalg.norm(np.diff(nactions, axis=0), axis=-1)
-    _ = plt.hist(dists, bins=100)
-    plt.title("real action velocity")
-    plt.show()
+    # _ = plt.hist(dists, bins=100)
+    # plt.title("real action velocity")
+    # plt.show()
 
-    fig, ax = plt.subplots(1, 2, figsize=(10, 10))
+    # fig, ax = plt.subplots(1, 2, figsize=(10, 10))
     for i in range(len(dataset)):
-        ax[0].cla()
-        ax[1].cla()
+        # ax[0].cla()
+        # ax[1].cla()
 
         torch_data = dataset[i]
         img = torch_data["obs"]["digit_index"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
-        ax[0].imshow(img)
-        ax[0].set_title(f"Index idx: {i}")
+        # ax[0].imshow(img)
+        # ax[0].set_title(f"Index idx: {i}")
 
         img = torch_data["obs"]["digit_thumb"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
-        ax[1].imshow(img)
-        ax[1].set_title(f"Thumb idx: {i}")
+        print(f"img.shape: {img.shape}")
+        # ax[1].imshow(img)
+        # ax[1].set_title(f"Thumb idx: {i}")
 
-        plt.pause(0.01)
-    plt.show()
+        # plt.pause(0.01)
+    # plt.show()
     print("done")
 
 

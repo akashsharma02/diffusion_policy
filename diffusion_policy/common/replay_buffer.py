@@ -139,7 +139,9 @@ class ReplayBuffer:
         Open a on-disk zarr directly (for dataset larger than memory).
         Slower.
         """
-        group = zarr.open(os.path.expanduser(zarr_path), mode)
+        print(f"zarr_path: {zarr_path}")
+        # group = zarr.open(os.path.expanduser(zarr_path), mode)
+        group = zarr.open(zarr_path, mode)
         return cls.create_from_group(group, **kwargs)
     
     # ============= copy constructors ===============
