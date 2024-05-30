@@ -81,8 +81,8 @@ seed: 42
 rl_device: "cuda:0"
 silent: false
 logging_dir: ./outputs/logs/
-ckpt_path: ./checkpoints/dino_unet/latest-006-003.ckpt
-urdf_path: ~/gum_ws/src/GUM/gum/devices/metahand/ros/meta_hand_description/urdf/meta_hand_franka.urdf
+ckpt_path: ./checkpoints/e2e_unet_bugfix/latest-001.ckpt
+urdf_path: /home/akashsharma/gum_ws/src/GUM/gum/devices/metahand/ros/meta_hand_description/urdf/meta_hand_franka.urdf
 
 # set the directory where the output files get saved
 hydra:

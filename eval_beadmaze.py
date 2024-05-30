@@ -9,6 +9,7 @@ import pytorch_kinematics as pk
 import torch
 from omegaconf import OmegaConf
 import einops
+import matplotlib.patches as mpatches
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 
@@ -120,6 +121,7 @@ def main(ckpt_path: str, urdf_path: str):
     val_sampler = val_dataset.sampler
     # replay_buffer = val_dataset.replay_buffer
     # last_episode = replay_buffer.get_episode(replay_buffer.n_episodes - 1)
+    policy.num_inference_steps = 16
     policy.set_normalizer(normalizer)
     policy.eval().to(device)
     policy.reset()
@@ -129,8 +131,6 @@ def main(ckpt_path: str, urdf_path: str):
     prev_target_joint = None
     predicted_joints = []
     gt_joints = []
-    print(f"len(val_dataset): {len(val_dataset)}")
-    print(val_dataset.val_mask)
     # Enumerating over val_dataset calls __next__ on the dataset which is problematic because it iterates over the full dataset
     for i in range(len(val_dataset)):
         data = val_dataset[i]
@@ -162,27 +162,27 @@ def main(ckpt_path: str, urdf_path: str):
         print(f"gt_joint         : {gt_joint}")
         print(f"this_target_joint: {this_target_joint}")
 
-        digit_thumb = obs_dict_np["digit_thumb"].numpy()
-        digit_index = obs_dict_np["digit_index"].numpy()
-        print(f"digit_thumb: {digit_thumb.shape}")
-        print(f"digit_index: {digit_index.shape}")
-        digit_thumb = [
-            digit_thumb[0, :3],
-            digit_thumb[0, 3:],
-            digit_thumb[1, :3],
-            digit_thumb[1, 3:],
-        ]
-        digit_index = [
-            digit_index[0, :3],
-            digit_index[0, 3:],
-            digit_index[1, :3],
-            digit_index[1, 3:],
-        ]
-        digit_thumb_vis = stack_image_for_vis(digit_thumb)
-        digit_index_vis = stack_image_for_vis(digit_index)
-        cv2.imshow("thumb", digit_thumb_vis[..., ::-1])
-        cv2.imshow("index", digit_index_vis[..., ::-1])
-        cv2.waitKey(0)
+        # digit_thumb = obs_dict_np["digit_thumb"].numpy()
+        # digit_index = obs_dict_np["digit_index"].numpy()
+        # print(f"digit_thumb: {digit_thumb.shape}")
+        # print(f"digit_index: {digit_index.shape}")
+        # digit_thumb = [
+        #     digit_thumb[0, :3],
+        #     digit_thumb[0, 3:],
+        #     digit_thumb[1, :3],
+        #     digit_thumb[1, 3:],
+        # ]
+        # digit_index = [
+        #     digit_index[0, :3],
+        #     digit_index[0, 3:],
+        #     digit_index[1, :3],
+        #     digit_index[1, 3:],
+        # ]
+        # digit_thumb_vis = stack_image_for_vis(digit_thumb)
+        # digit_index_vis = stack_image_for_vis(digit_index)
+        # cv2.imshow("thumb", digit_thumb_vis[..., ::-1])
+        # cv2.imshow("index", digit_index_vis[..., ::-1])
+        # cv2.waitKey(0)
 
     gt_joints = np.array(gt_joints)
     predicted_joints = np.array(predicted_joints)
@@ -213,22 +213,26 @@ def main(ckpt_path: str, urdf_path: str):
     # for pose_gt, pose_pred in zip(gt_traj, pred_traj):
     draw_3d_axes(
         ax,
-        gt_traj[::5],
-        axis_length=2e-3,
+        gt_traj[::10],
+        axis_length=5e-3,
         traj_color="b",
     )
     draw_3d_axes(
         ax,
-        pred_traj[::5],
-        axis_length=2e-3,
+        pred_traj[::10],
+        axis_length=5e-3,
         traj_color="r",
     )
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
     ax.set_title("End effector trajectory")
+    # Creating legend with color box
+    pop_a = mpatches.Patch(color="blue", label="Ground truth trajectory")
+    pop_b = mpatches.Patch(color="red", label="Predicted trajectory")
+    ax.legend(handles=[pop_a, pop_b])
 
-    set_equal_aspect_ratio_3D(ax, pos_gt[:, 0], pos_gt[:, 1], pos_gt[:, 2], alpha=1.5)
+    set_equal_aspect_ratio_3D(ax, pos_gt[:, 0], pos_gt[:, 1], pos_gt[:, 2], alpha=1.2)
 
     plt.show()
 

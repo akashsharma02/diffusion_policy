@@ -181,6 +181,9 @@ class RealBeadMazeImageDataset(BaseImageDataset):
             episode_mask=train_mask,
             key_first_k=key_first_k,
         )
+        data = sampler.sample_sequence(0)
+        self.thumb_bg = load_sample_from_buf(data["digit_thumb"][0])
+        self.index_bg = load_sample_from_buf(data["digit_index"][0])
 
         self.replay_buffer = replay_buffer
         self.sampler = sampler
@@ -280,14 +283,18 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         try:
             threadpool_limits(1)
             data = self.sampler.sample_sequence(idx)
+            print(f"{len(data['digit_thumb'])}")
 
             T_slice = slice(self.n_obs_steps)
 
-            # rgb_keys = ['digit_thumb', 'digit_index']
-            # lowdim_keys = ['robot_joint', 'allegro_joint']
             obs_dict = dict()
             for key in self.rgb_keys:
-                obs_dict[key] = self._get_tactile_images(data[key], T_slice, bg=None)
+                bg = None
+                if key == "digit_thumb":
+                    bg = self.thumb_bg
+                elif key == "digit_index":
+                    bg = self.index_bg
+                obs_dict[key] = self._get_tactile_images(data[key], T_slice, bg=bg)
                 del data[key]
             for key in self.lowdim_keys:
                 obs_dict[key] = data[key][T_slice].astype(np.float32)
@@ -403,6 +410,7 @@ def test():
         ax[1].set_title(f"Thumb idx: {i}")
 
         plt.pause(0.01)
+        input()
     plt.show()
     print("done")
 

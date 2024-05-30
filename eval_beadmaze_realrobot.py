@@ -1,11 +1,14 @@
 from typing import Callable, Dict, Optional
 import collections
+import math
+import time
 
 import click
 import dill
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
+from PIL import Image
 import pytorch_kinematics as pk
 import torch
 from omegaconf import OmegaConf
@@ -16,7 +19,18 @@ import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import JointState, CompressedImage
+from std_msgs.msg import Header
 import cv2
+
+
+def compute_diff(img1, img2, offset=0.0):
+    img1 = np.int32(img1)
+    img2 = np.int32(img2)
+    diff = img1 - img2
+    diff = diff / 255.0 + offset
+    diff = np.clip(diff, 0.0, 1.0)
+    diff = np.uint8(diff * 255.0)
+    return diff
 
 
 def draw_3d_axes(
@@ -85,10 +99,7 @@ class DiffusionPolicyNode(Node):
         self.config = config
 
         self.n_obs_steps = self.policy.n_obs_steps
-
-        self.index_digit_queue = collections.deque(maxlen=self.n_obs_steps * 2)
-        self.thumb_digit_queue = collections.deque(maxlen=self.n_obs_steps * 2)
-        self.joint_state_queue = collections.deque(maxlen=self.n_obs_steps)
+        self.policy.num_inference_steps = 16
 
         urdf_path = config.urdf_path
         self.fk_chain = pk.build_serial_chain_from_urdf(
@@ -115,115 +126,217 @@ class DiffusionPolicyNode(Node):
             JointState, self.config.joint_cmd_topic, 1
         )
 
-        self.timer = self.create_timer(0.01, self.on_timer)
+        index_nocontact_image = cv2.imread("./digit_index_no_contact.png")
+        self.index_nocontact_image = cv2.cvtColor(
+            index_nocontact_image, cv2.COLOR_BGR2RGB
+        )
+
+        thumb_nocontact_image = cv2.imread("./digit_thumb_no_contact.png")
+        self.thumb_nocontact_image = cv2.cvtColor(
+            thumb_nocontact_image, cv2.COLOR_BGR2RGB
+        )
+
+        self.frequency = 10
+        self.timer = self.create_timer(1 / self.frequency, self.on_timer)
         self.thumb_image = None
         self.index_image = None
-        self.curr_joint_angles = None
+        self.prev_target_joint = None
+        num_required_frames = self.config.digit_frame_stride + (
+            self.policy.n_obs_steps - 1
+        )
+
+        k = math.ceil(
+            (self.config.robot_state_fps / self.frequency) * self.policy.n_obs_steps
+        )
+        self.index_digit_queue = collections.deque(maxlen=num_required_frames)
+        self.thumb_digit_queue = collections.deque(maxlen=num_required_frames)
+        self.joint_state_queue = collections.deque(maxlen=k)
+
+    def digit_callback(self, msg: CompressedImage):
+        timestamp = None
+        if hasattr(msg, "header"):
+            timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        else:
+            timestamp = self.get_clock().now().nanoseconds * 1e-9
+
+        image = self.bridge.compressed_imgmsg_to_cv2(msg)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype("uint8")
+        return timestamp, image
 
     def index_callback(self, msg: CompressedImage):
-        image = self.bridge.compressed_imgmsg_to_cv2(msg)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image, (240, 320))
+        timestamp, image = self.digit_callback(msg)
+        image = compute_diff(image, self.index_nocontact_image, offset=0.5)
+        pil_image = Image.fromarray(image)
+        image = np.array(pil_image.resize((224, 224), Image.BILINEAR))
+        image = image.astype(np.float32) / 255.0
         self.get_logger().debug(f"Received index image: {image.shape}")
-        self.index_image = image
-        self.index_digit_queue.append(image)
+        self.index_digit_queue.append((timestamp, image))
 
     def thumb_callback(self, msg: CompressedImage):
-        image = self.bridge.compressed_imgmsg_to_cv2(msg)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image, (240, 320))
+        timestamp, image = self.digit_callback(msg)
+        image = compute_diff(image, self.thumb_nocontact_image, offset=0.5)
+        pil_image = Image.fromarray(image)
+        image = np.array(pil_image.resize((224, 224), Image.BILINEAR))
+        image = image.astype(np.float32) / 255.0
         self.get_logger().debug(f"Received thumb image: {image.shape}")
-        self.thumb_image = image
-        self.thumb_digit_queue.append(image)
+        self.thumb_digit_queue.append((timestamp, image))
 
     def franka_joint_state_callback(self, msg: JointState):
-        self.curr_joint_angles = torch.tensor(msg.position).to(self.device)
-        self.joint_state_queue.append(msg.position)
+        timestamp = None
+        if hasattr(msg, "header"):
+            timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        else:
+            timestamp = self.get_clock().now().nanoseconds * 1e-9
+
+        self.joint_state_queue.append((timestamp, msg.position))
+
+    def get_obs(self):
+        num_images_per_step = self.config.digit_fps / self.frequency
+        num_required_frames = self.config.digit_frame_stride + (
+            self.policy.n_obs_steps - 1
+        )
+        if len(self.index_digit_queue) < num_required_frames:
+            return False, None
+        if len(self.thumb_digit_queue) < num_required_frames:
+            return False, None
+
+        index_digits = [d for d in self.index_digit_queue]
+        thumb_digits = [d for d in self.thumb_digit_queue]
+        # index_digits = self.index_digit_queue.index(-num_required_frames,
+        # thumb_digits = self.thumb_digit_queue[-num_required_frames:]
+
+        # latest_index_timestamp = index_digits[-1][0]
+        # latest_thumb_timestamp = thumb_digits[-1][0]
+
+        index_observations = []
+        thumb_observations = []
+        index_timestamps = []
+        thumb_timestamps = []
+        for obs_step in np.arange(self.policy.n_obs_steps - 1, -1, -1):
+            curr_idx = -1 - obs_step
+            curr_stride_idx = -self.config.digit_frame_stride - obs_step
+            index_obs = [index_digits[curr_idx][1], index_digits[curr_stride_idx][1]]
+            index_obs = np.concatenate(index_obs, axis=-1)
+            thumb_obs = [thumb_digits[curr_idx][1], thumb_digits[curr_stride_idx][1]]
+            thumb_obs = np.concatenate(thumb_obs, axis=-1)
+            index_observations.append(index_obs)
+            thumb_observations.append(thumb_obs)
+            index_timestamps.append(index_digits[curr_idx][0])
+            thumb_timestamps.append(thumb_digits[curr_idx][0])
+
+        k = math.ceil(
+            (self.config.robot_state_fps / self.frequency) * self.policy.n_obs_steps
+        )
+
+        joint_timestamps, joint_states = zip(*[k for k in self.joint_state_queue])
+        joint_timestamps = np.array(list(joint_timestamps))
+        joint_states = np.array(list(joint_states))
+
+        this_idxs = list()
+        for t in index_timestamps:
+            is_before_idxs = np.nonzero(joint_timestamps < t)[0]
+            this_idx = 0
+            if len(is_before_idxs) > 0:
+                this_idx = is_before_idxs[-1]
+            this_idxs.append(this_idx)
+
+        index_observations = np.stack(index_observations, axis=0)
+        thumb_observations = np.stack(thumb_observations, axis=0)
+        index_observations = np.moveaxis(index_observations, -1, 1)
+        thumb_observations = np.moveaxis(thumb_observations, -1, 1)
+        joint_observations = joint_states[this_idxs]
+        # print(
+        #     index_observations.shape, thumb_observations.shape, joint_observations.shape
+        # )
+
+        obs_dict = {}
+        obs_dict["digit_index"] = index_observations
+        obs_dict["digit_thumb"] = thumb_observations
+        obs_dict["robot_joint"] = joint_observations[:, :7]
+        obs_dict["allegro_joint"] = joint_observations[:, 7:]
+        # obs_dict["timestamp"] = np.array(index_timestamps)
+        return True, obs_dict
 
     def on_timer(self):
-        if len(self.index_digit_queue) < self.n_obs_steps:
+        ok, obs_dict_np = self.get_obs()
+        if not ok:
             return
-        if len(self.thumb_digit_queue) < self.n_obs_steps:
-            return
-        if len(self.joint_state_queue) < self.n_obs_steps:
-            return
-        # self.get_logger().info(f"Received index image: {self.index_image.shape}")
-        index_images = np.stack([image for image in self.index_digit_queue])
-        thumb_images = np.stack([image for image in self.thumb_digit_queue])
-        robot_joint = np.stack([joint for joint in self.joint_state_queue])
-        obs_dict = {
-            "digit_index": index_images,
-            "digit_thumb": thumb_images,
-            "robot_joint": robot_joint,
-        }
-        obs_dict = dict_apply(
-            obs_dict,
-            lambda x: (
-                x.unsqueeze(0)
-                if not isinstance(x, np.ndarray)
-                else torch.from_numpy(x).unsqueeze(0).to(self.device)
-            ),
-        )
-        for key, val in obs_dict.items():
-            print(f"key: {key}, val: {val.shape}")
-        result = self.policy.predict_action(obs_dict)
-        action = result["action"][0].detach().to("cpu").numpy()
-        executable_action = action[0]
-        # We are assuming delta_action = True
-        curr_joint_angle = self.curr_joint_angles.squeeze().detach().to("cpu").numpy()
-        desired_joint_angle = curr_joint_angle + executable_action
+
+        assert obs_dict_np is not None
+
+        with torch.no_grad():
+            s = time.time()
+            obs_dict = dict_apply(
+                obs_dict_np, lambda x: torch.from_numpy(x).unsqueeze(0).to(self.device)
+            )
+            result = self.policy.predict_action(obs_dict)
+            action = result["action"][0].detach().to("cpu").numpy()
+            print(f"Inference latency: {time.time() - s}")
+
+        if self.prev_target_joint is None:
+            self.prev_target_joint = obs_dict_np["robot_joint"][-1]
+        executable_action = self.prev_target_joint.copy() + action[0]
+        # executable_action = obs_dict_np["robot_joint"][-1] + action[-1]
 
         header = Header(stamp=self.get_clock().now().to_msg())
         msg = JointState(
-            header=header, potition=desired_joint_angle, velocity=[], effort=[]
+            header=header, position=executable_action, velocity=[], effort=[]
         )
-        self.publisher.publish(msg)
+        self.joint_state_publisher.publish(msg)
+
+        self.prev_target_joint = executable_action
+        input()
 
 
-def main(ckpt_path: str, urdf_path: str):
+def main():
     rclpy.init()
+    config = OmegaConf.create(
+        {
+            "ckpt_path": "./checkpoints/dino_unet_bugfix/latest-006.ckpt",
+            "urdf_path": "../GUM/gum/devices/metahand/ros/meta_hand_description/urdf/meta_hand_franka.urdf",
+            "index_topic": "/digit_index/compressed",
+            "thumb_topic": "/digit_thumb/compressed",
+            "joint_state_topic": "/joint_states",
+            "joint_cmd_topic": "/joint_pos_cmd",
+            "digit_fps": 30,
+            "digit_frame_stride": 5,
+            "robot_state_fps": 30,
+        }
+    )
+    OmegaConf.register_new_resolver("eval", eval, replace=True)
+    # config = OmegaConf.resolve(config)
     device = (
         torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     )
     franka_urdf_chain = pk.build_serial_chain_from_urdf(
-        open(urdf_path).read(),
+        open(config.urdf_path).read(),
         end_link_name="meta_hand_base_frame",
         root_link_name="base_link",
     )
     franka_urdf_chain = franka_urdf_chain.to(device="cpu")
-    OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-    config = OmegaConf.create(
-        {
-            "ckpt_path": ckpt_path,
-            "urdf_path": urdf_path,
-            "index_topic": "/digit_index/compressed",
-            "thumb_topic": "/digit_thumb/compressed",
-            "joint_state_topic": "/franka/joint_states",
-            "joint_cmd_topic": "/joint_pos_cmd",
-        }
-    )
-    payload = torch.load(open(ckpt_path, "rb"), pickle_module=dill)
+    payload = torch.load(open(config.ckpt_path, "rb"), pickle_module=dill)
     cfg = payload["cfg"]
     cls = hydra.utils.get_class(cfg._target_)
     workspace = cls(cfg)
     workspace: BaseWorkspace
     workspace.load_payload(payload, exclude_keys=None, include_keys=None)
+
     policy = workspace.model
     if cfg.training.use_ema:
         policy = workspace.ema_model
 
-    dataset = None
-    with hydra.initialize("./diffusion_policy/config"):
-        cfg = hydra.compose("train_diffusion_unet_beadmaze_image_workspace")
-        OmegaConf.resolve(cfg)
-        dataset = hydra.utils.instantiate(cfg.task.dataset)
-    assert dataset is not None
+    # dataset = None
+    # with hydra.initialize("./diffusion_policy/config"):
+    #     cfg = hydra.compose("train_diffusion_unet_beadmaze_image_workspace")
+    #     OmegaConf.resolve(cfg)
+    #     dataset = hydra.utils.instantiate(cfg.task.dataset)
+    # assert dataset is not None
 
-    normalizer = dataset.get_normalizer()
+    # normalizer = dataset.get_normalizer()
     # val_dataset = dataset.get_validation_dataset()
 
-    policy.set_normalizer(normalizer)
+    # policy.set_normalizer(normalizer)
     policy.eval().to(device)
     policy.reset()
 
@@ -232,77 +345,6 @@ def main(ckpt_path: str, urdf_path: str):
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
-
-    # obs_deque = collections.deque([obs] * obs_horizon, maxlen=obs_horizon)
-
-    # prev_target_joint = None
-    # predicted_joints = []
-    # gt_joints = []
-    # print(f"len(val_dataset): {len(val_dataset)}")
-    # for i, data in enumerate(dataset):
-    #     if i > 500:
-    #         break
-    #
-    #     obs_dict = data["obs"]
-    #     obs_dict = dict_apply(
-    #         obs_dict,
-    #         lambda x: (
-    #             x.unsqueeze(0)
-    #             if not isinstance(x, np.ndarray)
-    #             else torch.from_numpy(x).unsqueeze(0).to(device)
-    #         ),
-    #     )
-    #
-    #     result = policy.predict_action(obs_dict)
-    #     action = result["action"][0].detach().to("cpu").numpy()
-    #
-    #     executable_action = action[0]
-    #     # We are assuming delta_action = True
-    #     gt_joint = obs_dict["robot_joint"].squeeze().detach().to("cpu").numpy()
-    #     gt_joint = gt_joint[-1]
-    #     if prev_target_joint is None:
-    #         prev_target_joint = gt_joint.copy()
-    #
-    #     this_target_joint = prev_target_joint.copy() + executable_action
-    #     prev_target_joint = this_target_joint
-    #     predicted_joints.append(this_target_joint)
-    #     gt_joints.append(gt_joint)
-    #     print(f"{i}")
-    #     print(f"gt_joint         : {gt_joint}")
-    #     print(f"this_target_joint: {this_target_joint}")
-    #
-    # gt_joints = np.array(gt_joints)
-    # predicted_joints = np.array(predicted_joints)
-    #
-    # # Compute trajectory using forward kinematics
-    # gt_joints_tensor = torch.from_numpy(gt_joints)
-    # predicted_joints_tensor = torch.from_numpy(predicted_joints)
-    # gt_traj = franka_urdf_chain.forward_kinematics(gt_joints_tensor, end_only=True)
-    # pred_traj = franka_urdf_chain.forward_kinematics(
-    #     predicted_joints_tensor, end_only=True
-    # )
-    # gt_traj = gt_traj.get_matrix().detach().numpy()
-    # pred_traj = pred_traj.get_matrix().detach().numpy()
-    #
-    # pos_gt = gt_traj[:, :3, 3]
-    # pos_pred = pred_traj[:, :3, 3]
-    # print(f"pos_gt: {pos_gt}")
-    # print(f"pos_pred: {pos_pred}")
-    # pos_error = np.abs(pos_gt - pos_pred)
-    #
-    # error = np.abs(gt_joints - predicted_joints)
-    # print(f"Mean error: {error.mean()}")
-    #
-    # fig = plt.figure()
-    # ax = fig.add_subplot(111, projection="3d")
-    #
-    # # for pose_gt, pose_pred in zip(gt_traj, pred_traj):
-    # draw_3d_axes(ax, gt_traj[::5], axis_length=2e-3, traj_color="b")
-    # draw_3d_axes(ax, pred_traj[::5], axis_length=2e-3, traj_color="r")
-    #
-    # set_equal_aspect_ratio_3D(ax, pos_gt[:, 0], pos_gt[:, 1], pos_gt[:, 2], alpha=1.5)
-    #
-    # plt.show()
 
 
 if __name__ == "__main__":
