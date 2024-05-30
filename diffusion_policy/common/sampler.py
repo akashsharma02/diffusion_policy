@@ -161,9 +161,7 @@ class SequenceSampler:
                         buffer_start_idx - 7 : buffer_start_idx + k_data
                     ]
                 except Exception as e:
-                    import pdb
-
-                    pdb.set_trace()
+                    print(f"Exception: {e}")
             data = sample
 
             if (sample_start_idx > 0) or (sample_end_idx < (self.sequence_length - 7)):

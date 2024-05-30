@@ -127,9 +127,9 @@ def main(ckpt_path: str, urdf_path: str):
 
     # obs_deque = collections.deque([obs] * obs_horizon, maxlen=obs_horizon)
 
-    prev_target_joint = None
-    predicted_joints = []
-    gt_joints = []
+    prev_target_pose = None
+    predicted_poses = []
+    gt_poses = []
     print(f"len(val_dataset): {len(val_dataset)}")
     print(val_dataset.val_mask)
     # Enumerating over val_dataset calls __next__ on the dataset which is problematic because it iterates over the full dataset
@@ -149,22 +149,22 @@ def main(ckpt_path: str, urdf_path: str):
 
         executable_action = action[-1]
         # We are assuming delta_action = True
-        gt_joint = obs_dict["robot_joint"].squeeze().detach().to("cpu").numpy()
-        gt_joint = gt_joint[-1]
-        if prev_target_joint is None:
-            prev_target_joint = gt_joint.copy()
+        gt_pose = obs_dict["robot_eef_pose"].squeeze().detach().to("cpu").numpy()
+        gt_pose = gt_pose[-1]
+        if prev_target_pose is None:
+            prev_target_pose = gt_pose.copy()
 
-        this_target_joint = prev_target_joint.copy() + executable_action
-        prev_target_joint = this_target_joint
-        predicted_joints.append(this_target_joint)
-        gt_joints.append(gt_joint)
+        this_target_pose = prev_target_pose.copy() + executable_action
+        prev_target_pose = this_target_pose
+        predicted_poses.append(this_target_pose)
+        gt_poses.append(gt_pose)
 
         print(f"{i}")
-        print(f"gt_joint         : {gt_joint}")
-        print(f"this_target_joint: {this_target_joint}")
+        print(f"gt_pose : {gt_pose}")
+        print(f"this_target_pose: {this_target_pose}")
 
-        digit_thumb = obs_dict_np["digit_thumb"].numpy()
-        digit_index = obs_dict_np["digit_index"].numpy()
+        # digit_thumb = obs_dict_np["digit_thumb"].numpy()
+        # digit_index = obs_dict_np["digit_index"].numpy()
         # print(f"digit_thumb: {digit_thumb.shape}")
         # print(f"digit_index: {digit_index.shape}")
         # digit_thumb = [
@@ -185,27 +185,37 @@ def main(ckpt_path: str, urdf_path: str):
         # cv2.imshow("index", digit_index_vis[..., ::-1])
         # cv2.waitKey(0)
 
-    gt_joints = np.array(gt_joints)
-    predicted_joints = np.array(predicted_joints)
+    gt_poses = np.array(gt_poses)
+    predicted_poses = np.array(predicted_poses)
+
+    gt_traj = np.zeros((len(gt_poses), 4, 4))
+    gt_traj[:, :3, 3] = gt_poses
+    gt_traj[:, :3, :3] = np.eye(3)
+    gt_traj[:, 3, 3] = 1.0
+
+    pred_traj = np.zeros((len(predicted_poses), 4, 4))
+    pred_traj[:, :3, 3] = predicted_poses
+    pred_traj[:, :3, :3] = np.eye(3)
+    pred_traj[:, 3, 3] = 1.0
 
     # Compute trajectory using forward kinematics
-    gt_joints_tensor = torch.from_numpy(gt_joints)
-    predicted_joints_tensor = torch.from_numpy(predicted_joints)
-    gt_traj = franka_urdf_chain.forward_kinematics(gt_joints_tensor, end_only=True)
-    pred_traj = franka_urdf_chain.forward_kinematics(
-        predicted_joints_tensor, end_only=True
-    )
-    gt_traj = gt_traj.get_matrix().detach().numpy()
-    pred_traj = pred_traj.get_matrix().detach().numpy()
+    # gt_joints_tensor = torch.from_numpy(gt_joints)
+    # predicted_joints_tensor = torch.from_numpy(predicted_joints)
+    # gt_traj = franka_urdf_chain.forward_kinematics(gt_joints_tensor, end_only=True)
+    # pred_traj = franka_urdf_chain.forward_kinematics(
+    #     predicted_joints_tensor, end_only=True
+    # )
+    # gt_traj = gt_traj.get_matrix().detach().numpy()
+    # pred_traj = pred_traj.get_matrix().detach().numpy()
 
-    pos_gt = gt_traj[:, :3, 3]
-    pos_pred = pred_traj[:, :3, 3]
-    print(f"pos_gt: {pos_gt}")
-    print(f"pos_pred: {pos_pred}")
-    pos_error = np.abs(pos_gt - pos_pred)
+    # pos_gt = gt_traj[:, :3, 3]
+    # pos_pred = pred_traj[:, :3, 3]
+    # print(f"pos_gt: {pos_gt}")
+    # print(f"pos_pred: {pos_pred}")
+    pos_error = np.abs(gt_poses - predicted_poses)
 
-    error = np.abs(gt_joints - predicted_joints)
-    print(f"Mean error: {error.mean()}")
+    # error = np.abs(gt_joints - predicted_joints)
+    # print(f"Mean error: {error.mean()}")
     print(f"Position error: {pos_error.mean()}")
 
     fig = plt.figure()
@@ -229,7 +239,13 @@ def main(ckpt_path: str, urdf_path: str):
     ax.set_zlabel("Z")
     ax.set_title("End effector trajectory")
 
-    set_equal_aspect_ratio_3D(ax, pos_gt[:, 0], pos_gt[:, 1], pos_gt[:, 2], alpha=1.5)
+    set_equal_aspect_ratio_3D(
+        ax,
+        predicted_poses[:, 0],
+        predicted_poses[:, 1],
+        predicted_poses[:, 2],
+        alpha=1.5,
+    )
 
     plt.show()
 
