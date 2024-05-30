@@ -124,6 +124,7 @@ def main(ckpt_path: str, urdf_path: str):
     policy.num_inference_steps = 16
     policy.set_normalizer(normalizer)
     policy.eval().to(device)
+    policy.num_inference_steps = 16
     policy.reset()
 
     # obs_deque = collections.deque([obs] * obs_horizon, maxlen=obs_horizon)

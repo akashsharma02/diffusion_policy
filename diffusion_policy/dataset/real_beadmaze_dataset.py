@@ -89,7 +89,8 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         tactile_input: str = {},
     ):
         assert os.path.isdir(dataset_path)
-
+        # bg_path = dataset_path + "/bg/"
+        # thumb_bg =
         replay_buffer = None
         if use_cache:
             # fingerprint shape_meta
