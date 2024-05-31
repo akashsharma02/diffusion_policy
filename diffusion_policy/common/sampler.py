@@ -34,6 +34,8 @@ def create_indices(
         max_start = episode_length - sequence_length + pad_after
 
         # range stops one idx before end
+        print(f"episode_length: {episode_length}, {sequence_length}, {pad_after}")
+        print(f"min_start: {min_start}, max_start: {max_start}")
         for idx in range(min_start, max_start + 1):
             buffer_start_idx = max(idx, 0) + start_idx
             buffer_end_idx = min(idx + sequence_length, episode_length) + start_idx
@@ -109,7 +111,6 @@ class SequenceSampler:
             episode_mask = np.ones(episode_ends.shape, dtype=bool)
 
         sequence_length = sequence_length + 5
-        # print(f"sequence_length: {sequence_length}")
         if np.any(episode_mask):
             indices = create_indices(
                 episode_ends,

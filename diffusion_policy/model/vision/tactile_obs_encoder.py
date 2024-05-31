@@ -44,7 +44,8 @@ class TactileObsEncoder(ModuleAttrMixin):
 
         self.rgb_keys = ["digit_thumb", "digit_index"]
         # self.low_dim_keys = ["robot_joint", "allegro_joint"]
-        self.low_dim_keys = ["robot_eef_pose"]
+        # self.low_dim_keys = ["robot_eef_pose"]
+        self.low_dim_keys = []
 
         if checkpoint_encoder is not None:
             self.load_tactile_encoder(checkpoint_encoder)
@@ -111,5 +112,5 @@ class TactileObsEncoder(ModuleAttrMixin):
 
     @torch.no_grad()
     def output_shape(self):
-        out_dim = (self.embed_dim * 2) + 3
+        out_dim = self.embed_dim * 2  # + 3
         return (out_dim,)

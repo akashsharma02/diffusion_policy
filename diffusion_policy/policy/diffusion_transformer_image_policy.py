@@ -1,5 +1,4 @@
 from typing import Dict, Tuple
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,31 +10,20 @@ from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.model.diffusion.transformer_for_diffusion import (
     TransformerForDiffusion,
 )
-from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
-
-# from diffusion_policy.common.robomimic_config_util import get_robomimic_config
-# from robomimic.algo import algo_factory
-# from robomimic.algo.algo import PolicyAlgo
-# import robomimic.utils.obs_utils as ObsUtils
-# import robomimic.models.base_nets as rmbn
-import diffusion_policy.model.vision.crop_randomizer as dmvc
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
+from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
+from diffusion_policy.model.vision.tactile_obs_encoder import TactileObsEncoder
 
 
-class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
+class DiffusionTransformerImagePolicy(BaseImagePolicy):
     def __init__(
         self,
         shape_meta: dict,
         noise_scheduler: DDPMScheduler,
-        # task params
+        obs_encoder: TactileObsEncoder,
         horizon,
         n_action_steps,
         n_obs_steps,
-        num_inference_steps=None,
-        # image
-        crop_shape=(76, 76),
-        obs_encoder_group_norm=False,
-        eval_fixed_crop=False,
         # arch
         n_layer=8,
         n_cond_layers=0,
@@ -47,95 +35,24 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         time_as_cond=True,
         obs_as_cond=True,
         pred_action_steps_only=False,
+        num_inference_steps=None,
         # parameters passed to step
         **kwargs,
     ):
         super().__init__()
+        if pred_action_steps_only:
+            assert obs_as_cond
 
-        # parse shape_meta
         action_shape = shape_meta["action"]["shape"]
+        obs_shape = shape_meta["obs"]
         assert len(action_shape) == 1
         action_dim = action_shape[0]
-        obs_shape_meta = shape_meta["obs"]
-        obs_config = {"low_dim": [], "rgb": [], "depth": [], "scan": []}
-        obs_key_shapes = dict()
-        for key, attr in obs_shape_meta.items():
-            shape = attr["shape"]
-            obs_key_shapes[key] = list(shape)
 
-            type = attr.get("type", "low_dim")
-            if type == "rgb":
-                obs_config["rgb"].append(key)
-            elif type == "low_dim":
-                obs_config["low_dim"].append(key)
-            else:
-                raise RuntimeError(f"Unsupported obs type: {type}")
-
-        # get raw robomimic config
-        # config = get_robomimic_config(
-        #     algo_name="bc_rnn", hdf5_type="image", task_name="square", dataset_type="ph"
-        # )
-        #
-        # with config.unlocked():
-        #     # set config with shape_meta
-        #     config.observation.modalities.obs = obs_config
-        #
-        #     if crop_shape is None:
-        #         for key, modality in config.observation.encoder.items():
-        #             if modality.obs_randomizer_class == "CropRandomizer":
-        #                 modality["obs_randomizer_class"] = None
-        #     else:
-        #         # set random crop parameter
-        #         ch, cw = crop_shape
-        #         for key, modality in config.observation.encoder.items():
-        #             if modality.obs_randomizer_class == "CropRandomizer":
-        #                 modality.obs_randomizer_kwargs.crop_height = ch
-        #                 modality.obs_randomizer_kwargs.crop_width = cw
-        #
-        # init global state
-        # ObsUtils.initialize_obs_utils_with_config(config)
-
-        # load model
-        # policy: PolicyAlgo = algo_factory(
-        #     algo_name=config.algo_name,
-        #     config=config,
-        #     obs_key_shapes=obs_key_shapes,
-        #     ac_dim=action_dim,
-        #     device="cpu",
-        # )
-
-        # obs_encoder = policy.nets["policy"].nets["encoder"].nets["obs"]
-        obs_encoder = obs_encoder
-        if obs_encoder_group_norm:
-            # replace batch norm with group norm
-            replace_submodules(
-                root_module=obs_encoder,
-                predicate=lambda x: isinstance(x, nn.BatchNorm2d),
-                func=lambda x: nn.GroupNorm(
-                    num_groups=x.num_features // 16, num_channels=x.num_features
-                ),
-            )
-            # obs_encoder.obs_nets['agentview_image'].nets[0].nets
-
-        # obs_encoder.obs_randomizers['agentview_image']
-        if eval_fixed_crop:
-            replace_submodules(
-                root_module=obs_encoder,
-                predicate=lambda x: isinstance(x, rmbn.CropRandomizer),
-                func=lambda x: dmvc.CropRandomizer(
-                    input_shape=x.input_shape,
-                    crop_height=x.crop_height,
-                    crop_width=x.crop_width,
-                    num_crops=x.num_crops,
-                    pos_enc=x.pos_enc,
-                ),
-            )
-
-        # create diffusion model
         obs_feature_dim = obs_encoder.output_shape()[0]
         input_dim = action_dim if obs_as_cond else (obs_feature_dim + action_dim)
         output_dim = input_dim
         cond_dim = obs_feature_dim if obs_as_cond else 0
+        self.obs_encoder = obs_encoder
 
         model = TransformerForDiffusion(
             input_dim=input_dim,
@@ -154,7 +71,6 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
             n_cond_layers=n_cond_layers,
         )
 
-        self.obs_encoder = obs_encoder
         self.model = model
         self.noise_scheduler = noise_scheduler
         self.mask_generator = LowdimMaskGenerator(
@@ -166,7 +82,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         )
         self.normalizer = LinearNormalizer()
         self.horizon = horizon
-        self.obs_feature_dim = obs_feature_dim
+        self.obs_dim = obs_feature_dim
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
@@ -232,7 +148,7 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         B, To = value.shape[:2]
         T = self.horizon
         Da = self.action_dim
-        Do = self.obs_feature_dim
+        Do = self.obs_dim
         To = self.n_obs_steps
 
         # build input
@@ -289,28 +205,17 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
         result = {"action": action, "action_pred": action_pred}
         return result
 
-    # ========= training  ============
+        # ========= training  ============
+
     def set_normalizer(self, normalizer: LinearNormalizer):
         self.normalizer.load_state_dict(normalizer.state_dict())
 
     def get_optimizer(
-        self,
-        transformer_weight_decay: float,
-        obs_encoder_weight_decay: float,
-        learning_rate: float,
-        betas: Tuple[float, float],
+        self, weight_decay: float, learning_rate: float, betas: Tuple[float, float]
     ) -> torch.optim.Optimizer:
-        optim_groups = self.model.get_optim_groups(
-            weight_decay=transformer_weight_decay
+        return self.model.configure_optimizers(
+            weight_decay=weight_decay, learning_rate=learning_rate, betas=betas
         )
-        optim_groups.append(
-            {
-                "params": self.obs_encoder.parameters(),
-                "weight_decay": obs_encoder_weight_decay,
-            }
-        )
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
-        return optimizer
 
     def compute_loss(self, batch):
         # normalize input
@@ -330,6 +235,8 @@ class DiffusionTransformerHybridImagePolicy(BaseImagePolicy):
                 nobs, lambda x: x[:, :To, ...].reshape(-1, *x.shape[2:])
             )
             nobs_features = self.obs_encoder(this_nobs)
+            # print(f"nobs_features: {nobs_features.shape}")
+            # print(f"trajectory: {trajectory.shape}")
             # reshape back to B, T, Do
             cond = nobs_features.reshape(batch_size, To, -1)
             if self.pred_action_steps_only:

@@ -116,8 +116,9 @@ def main(ckpt_path: str, urdf_path: str):
     assert dataset is not None
 
     normalizer = dataset.get_normalizer()
+    # val_sampler = val_dataset.sampler
     val_dataset = dataset.get_validation_dataset()
-    val_sampler = val_dataset.sampler
+    # dataset.replay_buffer.episode_ends
     # replay_buffer = val_dataset.replay_buffer
     # last_episode = replay_buffer.get_episode(replay_buffer.n_episodes - 1)
     policy.set_normalizer(normalizer)
@@ -129,11 +130,14 @@ def main(ckpt_path: str, urdf_path: str):
 
     prev_target_pose = None
     predicted_poses = []
+    # print(f"len(val_dataset): {len(val_dataset)}")
     gt_poses = []
-    print(f"len(val_dataset): {len(val_dataset)}")
-    print(val_dataset.val_mask)
+    # print(val_dataset.val_mask)
     # Enumerating over val_dataset calls __next__ on the dataset which is problematic because it iterates over the full dataset
+    # for i in range(len(dataset)):
     for i in range(len(val_dataset)):
+        # if i > dataset.replay_buffer.episode_ends[0] - 15:
+        #     break
         data = val_dataset[i]
         obs_dict_np = data["obs"]
         obs_dict = dict_apply(
@@ -144,13 +148,19 @@ def main(ckpt_path: str, urdf_path: str):
                 else torch.from_numpy(x).unsqueeze(0).to(device)
             ),
         )
+        # robot_pose = obs_dict["robot_eef_pose"]
+        # obs_dict["robot_eef_pose"] = torch.randn_like(robot_pose)
+        # obs_dict["digit_thumb"] = torch.zeros_like(obs_dict["digit_thumb"]) + 0.5
+        # obs_dict["digit_index"] = torch.zeros_like(obs_dict["digit_index"]) + 0.5
+        del obs_dict["robot_eef_pose"]
         result = policy.predict_action(obs_dict)
         action = result["action"][0].detach().to("cpu").numpy()
 
-        executable_action = action[-1]
+        executable_action = action[1]
         # We are assuming delta_action = True
-        gt_pose = obs_dict["robot_eef_pose"].squeeze().detach().to("cpu").numpy()
-        gt_pose = gt_pose[-1]
+        gt_pose = obs_dict_np["robot_eef_pose"][-1]
+        # gt_pose = data["action"][-1].numpy()
+        # gt_pose = gt_pose[-1]
         if prev_target_pose is None:
             prev_target_pose = gt_pose.copy()
 

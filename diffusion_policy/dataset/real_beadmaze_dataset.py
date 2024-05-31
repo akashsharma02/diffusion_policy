@@ -188,8 +188,9 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         self.shape_meta = shape_meta
         self.rgb_keys = ["digit_thumb", "digit_index"]  # rgb_keys
         # self.rgb_keys = rgb_keys
-        # self.lowdim_keys = ["robot_joint", "allegro_joint"]  # lowdim_keys
-        self.lowdim_keys = ["robot_eef_pose"]  # lowdim_keys
+        self.lowdim_keys = ["robot_joint", "allegro_joint"]  # lowdim_keys
+        # self.lowdim_keys = ["robot_eef_pose"]  # lowdim_keys
+        # self.lowdim_keys = []
         # self.lowdim_keys = lowdim_keys
         self.n_obs_steps = n_obs_steps
         self.val_mask = val_mask
@@ -396,9 +397,9 @@ def test():
     normalizer = dataset.get_normalizer()
     nactions = normalizer["action"].normalize(dataset.replay_buffer["action"][:])
     dists = np.linalg.norm(np.diff(nactions, axis=0), axis=-1)
-    # _ = plt.hist(dists, bins=100)
-    # plt.title("real action velocity")
-    # plt.show()
+    _ = plt.hist(dists, bins=100)
+    plt.title("real action velocity")
+    plt.show()
 
     fig, ax = plt.subplots(1, 2, figsize=(10, 10))
     for i in range(len(dataset)):
@@ -414,8 +415,8 @@ def test():
         ax[1].imshow(img)
         ax[1].set_title(f"Thumb idx: {i}")
 
-    #     plt.pause(0.001)
-    # plt.show()
+        plt.pause(0.001)
+    plt.show()
     print("done")
 
 
