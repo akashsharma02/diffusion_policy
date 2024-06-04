@@ -3,7 +3,7 @@ defaults:
   - override hydra/job_logging: disabled
 env:
   name: tray_grasp
-  step_rate: 6.0
+  step_rate: 10.0
   episode_length: 600
   obs:
     data_clients:
@@ -81,13 +81,7 @@ seed: 42
 rl_device: "cuda:0"
 silent: false
 logging_dir: ./outputs/logs/
-# ckpt_path: ./checkpoints/e2e_unet_bugfix/epoch=0060-train_loss=0.010-004.ckpt # best checkpoint
-# ckpt_path: ./checkpoints/ijepa_finetune_batchsize64/epoch=0045-val_loss=0.007.ckpt
-# ckpt_path: ./checkpoints/mae_unet_bugfix/epoch=0080-train_loss=0.005-004.ckpt
-# ckpt_path: ./checkpoints/dino_unet_bugfix/epoch=0050-train_loss=0.008-001.ckpt
-# ckpt_path: ./checkpoints/ijepa_unet_bugfix/epoch=0050-train_loss=0.011-004.ckpt # best checkpoint
-ckpt_path: ./checkpoints/ijepa_unet_bugfix/epoch=0060-train_loss=0.009-006.ckpt
-
+ckpt_path: ./checkpoints/ijepa_pose/latest.ckpt
 urdf_path: /home/akashsharma/gum_ws/src/GUM/gum/devices/metahand/ros/meta_hand_description/urdf/meta_hand_franka.urdf
 
 # set the directory where the output files get saved
