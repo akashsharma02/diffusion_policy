@@ -15,6 +15,7 @@ from diffusion_policy.model.vision.multi_image_obs_encoder import MultiImageObsE
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 
 
+
 class DiffusionUnetImagePolicy(BaseImagePolicy):
     def __init__(
         self,
@@ -42,6 +43,7 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         action_dim = action_shape[0]
         # get feature dim
         obs_feature_dim = obs_encoder.output_shape()[0]
+        print(f"obs_feature_dim: {obs_feature_dim}")
 
         # create diffusion model
         input_dim = action_dim + obs_feature_dim
@@ -49,7 +51,7 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         if obs_as_global_cond:
             input_dim = action_dim
             global_cond_dim = obs_feature_dim * n_obs_steps
-
+        print(f"input_dim: {input_dim}, global_cond_dim: {global_cond_dim}")
         model = ConditionalUnet1D(
             input_dim=input_dim,
             local_cond_dim=None,
