@@ -108,8 +108,8 @@ class SequenceSampler:
         if episode_mask is None:
             episode_mask = np.ones(episode_ends.shape, dtype=bool)
 
-        sequence_length = sequence_length + 7
-        print(f"sequence_length: {sequence_length}")
+        sequence_length = sequence_length + 5
+        # print(f"sequence_length: {sequence_length}")
         if np.any(episode_mask):
             indices = create_indices(
                 episode_ends,
@@ -120,7 +120,7 @@ class SequenceSampler:
             )
         else:
             indices = np.zeros((0, 4), dtype=np.int64)
-        # (buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx)
+        print(f"indices: {indices}")
         self.indices = indices
         self.keys = list(keys)  # prevent OmegaConf list performance problem
         self.sequence_length = sequence_length
@@ -137,8 +137,8 @@ class SequenceSampler:
             sample_start_idx,
             sample_end_idx,
         ) = self.indices[idx]
-        buffer_start_idx += 7
-        sample_end_idx = sample_end_idx - 7
+        buffer_start_idx += 5
+        sample_end_idx = sample_end_idx - 5
         result = dict()
         for key in self.keys:
             input_arr = self.replay_buffer[key]
@@ -149,6 +149,7 @@ class SequenceSampler:
                 # performance optimization, only load used obs steps
                 n_data = buffer_end_idx - buffer_start_idx
                 k_data = min(self.key_first_k[key], n_data)
+                # print(f"key: {key}, n_data: {n_data}, k_data: {k_data}")
                 # fill value with Nan to catch bugs
                 # the non-loaded region should never be used
                 sample = np.full(
@@ -157,23 +158,27 @@ class SequenceSampler:
                     dtype=input_arr.dtype,
                 )
                 try:
-                    sample[: k_data + 7] = input_arr[
-                        buffer_start_idx - 7 : buffer_start_idx + k_data
+                    sample[: k_data + 5] = input_arr[
+                        buffer_start_idx - 5 : buffer_start_idx + k_data
                     ]
                 except Exception as e:
-                    import pdb
-
-                    pdb.set_trace()
+                    print(
+                        n_data,
+                        k_data + 5,
+                        buffer_start_idx - 5,
+                        buffer_start_idx + k_data,
+                    )
+                    print(f"Exception: {e}")
             data = sample
 
-            if (sample_start_idx > 0) or (sample_end_idx < (self.sequence_length - 7)):
+            if (sample_start_idx > 0) or (sample_end_idx < (self.sequence_length - 5)):
                 data = np.zeros(
-                    shape=(self.sequence_length - 7,) + input_arr.shape[1:],
+                    shape=(self.sequence_length - 5,) + input_arr.shape[1:],
                     dtype=input_arr.dtype,
                 )
                 if sample_start_idx > 0:
                     data[:sample_start_idx] = sample[0]
-                if sample_end_idx < (self.sequence_length - 7):
+                if sample_end_idx < (self.sequence_length - 5):
                     data[sample_end_idx:] = sample[-1]
                 data[sample_start_idx:sample_end_idx] = sample
             result[key] = data

@@ -15,6 +15,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 from threadpoolctl import threadpool_limits
 from torchvision import transforms
+import pytorch_kinematics as pk
 
 from diffusion_policy.common.normalize_util import (
     array_to_stats,
@@ -47,12 +48,11 @@ def compute_diff(img1, img2, offset=0.0):
     return diff
 
 
-def load_sample_from_buf(io_buf, img_bg=None):
-    img = load_bin_image(io_buf)
+def load_sample_from_buf(img, img_bg=None):
     if img_bg is not None:
         img = compute_diff(img, img_bg, offset=0.5)
     img = Image.fromarray(img)
-    return img.convert("RGB")
+    return img
 
 
 def load_bin_image(io_buf):
@@ -89,8 +89,6 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         tactile_input: str = {},
     ):
         assert os.path.isdir(dataset_path)
-        # bg_path = dataset_path + "/bg/"
-        # thumb_bg =
         replay_buffer = None
         if use_cache:
             # fingerprint shape_meta
@@ -168,7 +166,6 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         val_mask = get_val_mask(
             n_episodes=replay_buffer.n_episodes, val_ratio=val_ratio, seed=seed
         )
-        print(f"val_mask: {val_mask}")
         train_mask = ~val_mask
         train_mask = downsample_mask(
             mask=train_mask, max_n=max_train_episodes, seed=seed
@@ -190,7 +187,10 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         self.sampler = sampler
         self.shape_meta = shape_meta
         self.rgb_keys = ["digit_thumb", "digit_index"]  # rgb_keys
-        self.lowdim_keys = ["robot_joint", "allegro_joint"]  # lowdim_keys
+        # self.rgb_keys = rgb_keys
+        # self.lowdim_keys = ["robot_joint", "allegro_joint"]  # lowdim_keys
+        self.lowdim_keys = ["robot_eef_pose"]  # lowdim_keys
+        # self.lowdim_keys = lowdim_keys
         self.n_obs_steps = n_obs_steps
         self.val_mask = val_mask
         self.horizon = horizon
@@ -232,6 +232,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         normalizer = LinearNormalizer()
 
         # action
+
         normalizer["action"] = SingleFieldLinearNormalizer.create_fit(
             self.replay_buffer["action"]
         )
@@ -259,10 +260,11 @@ class RealBeadMazeImageDataset(BaseImageDataset):
     def _get_tactile_images(self, data, T_slice, bg=None):
         data_slice = []
         for i in range(T_slice.stop):
-            idx_start = i + 7
+            idx_start = i + 5
             sample_images = []
             for i in self.frames_concat_idx:
                 idx_sample = idx_start - i
+                # print(f"idx_sample: {idx_sample}")
                 image = self.img_loader(data[idx_sample], bg)
                 image = self.transform_resize(image)
                 sample_images.append(image)
@@ -315,7 +317,8 @@ class RealBeadMazeImageDataset(BaseImageDataset):
                 "allegro_action": torch.from_numpy(allegro_action),
             }
             return torch_data
-        except:
+        except Exception as e:
+            print(f"Error: {e}")
             return self.__getitem__(np.clip(idx + 1, 0, len(self) - 1))
 
 
@@ -345,10 +348,10 @@ def _get_replay_buffer(dataset_path, shape_meta, store):
             lowdim_keys.append(key)
             lowdim_shapes[key] = tuple(shape)
             if "pose" in key:
-                assert tuple(shape) in [(2,), (6,), (7,), (16,)]
+                assert tuple(shape) in [(2,), (3,), (6,), (7,), (16,)]
 
     action_shape = tuple(shape_meta["action"]["shape"])
-    assert action_shape in [(2,), (6,), (7,), (16,)]
+    assert action_shape in [(2,), (3,), (6,), (7,), (16,)]
 
     # load data
     cv2.setNumThreads(1)
@@ -392,9 +395,9 @@ def test():
     normalizer = dataset.get_normalizer()
     nactions = normalizer["action"].normalize(dataset.replay_buffer["action"][:])
     dists = np.linalg.norm(np.diff(nactions, axis=0), axis=-1)
-    _ = plt.hist(dists, bins=100)
-    plt.title("real action velocity")
-    plt.show()
+    # _ = plt.hist(dists, bins=100)
+    # plt.title("real action velocity")
+    # plt.show()
 
     fig, ax = plt.subplots(1, 2, figsize=(10, 10))
     for i in range(len(dataset)):
