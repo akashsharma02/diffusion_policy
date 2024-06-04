@@ -3,7 +3,7 @@ defaults:
   - task: real_beadmaze_image
 
 name: train_diffusion_unet_image
-_target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
+_target_: diffusion_policy.workspace.train_mlp_workspace.TrainMLPWorkspace
 
 task_name: ${task.name}
 shape_meta: ${task.shape_meta}
@@ -16,20 +16,15 @@ n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
 keypoint_visible_rate: 1.0
-obs_as_global_cond: True
+obs_as_global_cond: False
 
 tactile_input:
   out_format: "concat_ch_img" # ["video", "concat_ch_img"  "single_image"]
   num_frames: 2 # num frames in input (for video and concat_ch_img format)
   frame_stride: 5 # temporal stride between frames in input
 
-# tactile_input:
-#   out_format: "video" # ["video", "concat_ch_img"  "single_image"]
-#   num_frames: 4 # num frames in input (for video and concat_ch_img format)
-#   frame_stride: 2  # temporal stride between frames in input
-
 policy:
-  _target_: diffusion_policy.policy.diffusion_unet_image_policy.DiffusionUnetImagePolicy
+  _target_: diffusion_policy.policy.mlp_policy.MLPPolicy
 
   shape_meta: ${shape_meta}
 
@@ -53,8 +48,8 @@ policy:
       in_chans: 6
       pos_embed_fn: sinusoidal
     embed_dim: 768
-    checkpoint_encoder: "checkpoints/gelsight_ijepa_vitbase.pth"
-    train_encoder: False
+    checkpoint_encoder: null #"checkpoints/gelsight_ijepa_vitbase.pth"
+    train_encoder: True
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
@@ -116,7 +111,7 @@ training:
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
-  use_ema: True
+  use_ema: False
   # training loop control
   # in epochs
   rollout_every: 5

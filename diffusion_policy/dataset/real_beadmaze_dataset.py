@@ -86,6 +86,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         val_ratio=0.0,
         max_train_episodes=None,
         delta_action=False,
+        delta_proprioception=False,
         tactile_input: str = {},
     ):
         assert os.path.isdir(dataset_path)
@@ -148,6 +149,24 @@ class RealBeadMazeImageDataset(BaseImageDataset):
                 # to ensure consistency with positional mode
                 actions_diff[start + 1 : end] = np.diff(actions[start:end], axis=0)
             replay_buffer["action"][:] = actions_diff
+        if delta_proprioception:
+            # replace action as relative to previous frame
+            actions = replay_buffer["robot_joint"][:]
+            # support positions only at this time
+            assert actions.shape[1] <= 7
+            actions_diff = np.zeros_like(actions)
+            episode_ends = replay_buffer.episode_ends[:]
+            for i in range(len(episode_ends)):
+                start = 0
+                if i > 0:
+                    start = episode_ends[i - 1]
+                end = episode_ends[i]
+                # delta action is the difference between previous desired position and the current
+                # it should be scheduled at the previous timestep for the current timestep
+                # to ensure consistency with positional mode
+                actions_diff[start + 1 : end] = np.diff(actions[start:end], axis=0)
+            print(f"actions_diff: {actions_diff}")
+            replay_buffer["robot_joint"][:] = actions_diff
 
         rgb_keys = list()
         lowdim_keys = list()
@@ -170,6 +189,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         )
         print(f"val_mask: {val_mask}")
         train_mask = ~val_mask
+        print(f"num_train_episodes: {np.sum(train_mask)}")
         train_mask = downsample_mask(
             mask=train_mask, max_n=max_train_episodes, seed=seed
         )
@@ -190,7 +210,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         self.sampler = sampler
         self.shape_meta = shape_meta
         self.rgb_keys = ["digit_thumb", "digit_index"]  # rgb_keys
-        self.lowdim_keys = ["robot_joint", "allegro_joint"]  # lowdim_keys
+        self.lowdim_keys = ["robot_joint"]  # , "allegro_joint"]  # lowdim_keys
         self.n_obs_steps = n_obs_steps
         self.val_mask = val_mask
         self.horizon = horizon
@@ -286,6 +306,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
             data = self.sampler.sample_sequence(idx)
 
             T_slice = slice(self.n_obs_steps)
+            # T_slice = slice(self.horizon)
 
             # rgb_keys = ['digit_thumb', 'digit_index']
             # lowdim_keys = ['robot_joint', 'allegro_joint']

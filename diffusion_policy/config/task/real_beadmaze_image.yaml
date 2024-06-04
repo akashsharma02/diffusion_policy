@@ -14,9 +14,9 @@ shape_meta: &shape_meta # acceptable types: rgb, low_dim
     robot_joint:
       shape: [7]
       type: low_dim
-    allegro_joint:
-      shape: [16]
-      type: low_dim
+    # allegro_joint:
+    #   shape: [16]
+    #   type: low_dim
   action:
     shape: [7]
   allegro_action:
@@ -39,4 +39,5 @@ dataset:
   val_ratio: 0.1
   max_train_episodes: null
   delta_action: False
+  delta_proprioception: False
   tactile_input: ${tactile_input}

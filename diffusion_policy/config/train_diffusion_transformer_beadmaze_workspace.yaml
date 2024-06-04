@@ -2,8 +2,8 @@ defaults:
   - _self_
   - task: real_beadmaze_image
 
-name: train_diffusion_unet_image
-_target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
+name: train_diffusion_transformer_hybrid
+_target_: diffusion_policy.workspace.train_diffusion_transformer_hybrid_workspace.TrainDiffusionTransformerHybridWorkspace
 
 task_name: ${task.name}
 shape_meta: ${task.shape_meta}
@@ -16,34 +16,26 @@ n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
 keypoint_visible_rate: 1.0
-obs_as_global_cond: True
+obs_as_cond: True
 
 tactile_input:
   out_format: "concat_ch_img" # ["video", "concat_ch_img"  "single_image"]
   num_frames: 2 # num frames in input (for video and concat_ch_img format)
   frame_stride: 5 # temporal stride between frames in input
 
-# tactile_input:
-#   out_format: "video" # ["video", "concat_ch_img"  "single_image"]
-#   num_frames: 4 # num frames in input (for video and concat_ch_img format)
-#   frame_stride: 2  # temporal stride between frames in input
-
 policy:
-  _target_: diffusion_policy.policy.diffusion_unet_image_policy.DiffusionUnetImagePolicy
+  _target_: diffusion_policy.policy.diffusion_transformer_hybrid_image_policy.DiffusionTransformerHybridImagePolicy
 
   shape_meta: ${shape_meta}
 
   noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
+    _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
     num_train_timesteps: 100
     beta_start: 0.0001
     beta_end: 0.02
-    # beta_schedule is important
-    # this is the best we found
     beta_schedule: squaredcos_cap_v2
-    clip_sample: True
-    set_alpha_to_one: True
-    steps_offset: 0
+    variance_type: fixed_small # Yilun's paper uses fixed_small_log instead, but easy to cause Nan
+    clip_sample: True # required when predict_epsilon=False
     prediction_type: epsilon # or sample
 
   obs_encoder:
@@ -60,17 +52,20 @@ policy:
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 100
-  obs_as_global_cond: ${obs_as_global_cond}
-  # crop_shape: null
-  # diffusion_step_embed_dim: 128
-  # down_dims: [512, 1024, 2048]
-  # kernel_size: 5
-  # n_groups: 8
-  diffusion_step_embed_dim: 128
-  down_dims: [256, 512, 1024]
-  kernel_size: 5
-  n_groups: 8
-  cond_predict_scale: True
+
+  # crop_shape: [76, 76]
+  # obs_encoder_group_norm: True
+  # eval_fixed_crop: True
+
+  n_layer: 8
+  n_cond_layers: 0 # >0: use transformer encoder for cond, otherwise use MLP
+  n_head: 8
+  n_emb: 512
+  p_drop_emb: 0.0
+  p_drop_attn: 0.0
+  causal_attn: True
+  time_as_cond: True # if false, use BERT like encoder only arch, time as input
+  obs_as_cond: ${obs_as_cond}
 
   # scheduler.step params
   # predict_epsilon: True
@@ -84,25 +79,24 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 128
-  num_workers: 16
+  batch_size: 64
+  num_workers: 8
   shuffle: True
   pin_memory: True
-  persistent_workers: True
+  persistent_workers: False
 
 val_dataloader:
-  batch_size: 128
-  num_workers: 16
+  batch_size: 64
+  num_workers: 8
   shuffle: False
   pin_memory: True
-  persistent_workers: True
+  persistent_workers: False
 
 optimizer:
-  _target_: torch.optim.AdamW
-  lr: 1.0e-4
+  transformer_weight_decay: 1.0e-3
+  obs_encoder_weight_decay: 1.0e-6
+  learning_rate: 1.0e-4
   betas: [0.95, 0.999]
-  eps: 1.0e-8
-  weight_decay: 1.0e-6
 
 training:
   device: "cuda:0"
@@ -111,17 +105,18 @@ training:
   resume: True
   # optimization
   lr_scheduler: cosine
-  lr_warmup_steps: 500
+  # Transformer needs LR warmup
+  lr_warmup_steps: 1000
   num_epochs: 100
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
-  use_ema: True
+  use_ema: False
   # training loop control
   # in epochs
   rollout_every: 5
   checkpoint_every: 5
-  val_every: 5
+  val_every: 1
   sample_every: 5
   # steps per epoch
   max_train_steps: null
@@ -141,7 +136,7 @@ logging:
 checkpoint:
   topk:
     monitor_key: val_loss
-    mode: min
+    mode: max
     k: 5
     format_str: "epoch={epoch:04d}-val_loss={val_loss:.3f}.ckpt"
   save_last_ckpt: True
