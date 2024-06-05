@@ -25,12 +25,23 @@ TOPICS_EXTRACT = [
 STEP_SIZE = 1
 FPS = 30.0
 
-PATH_ROSBAGS = (
-    f"/home/akashsharma/workspace/datasets/diffusion_policy/diffusion_policy_rosbags/"
-)
-PATH_OUTPUT = f"./dataset_pickle/"
-PATH_OUPUT_ZARR = f"./data/bead_maze_pos/"
+PATH_ROSBAGS = f"/home/akashsharma/workspace/datasets/diffusion_policy/dp_rosbags/"
+PATH_OUTPUT = f"./dataset_pickle_new2/"
+PATH_OUPUT_ZARR = f"./data/bead_maze_new2/"
 
+old_thumb_bg = cv2.imread("./digit_thumb.jpg", cv2.IMREAD_COLOR)
+old_index_bg = cv2.imread("./digit_index.jpg", cv2.IMREAD_COLOR)
+new_thumb_bg = cv2.imread("./digit_thumb_no_contact.png", cv2.IMREAD_COLOR)
+new_thumb_bg = cv2.cvtColor(new_thumb_bg, cv2.COLOR_BGR2RGB)
+new_index_bg = cv2.imread("./digit_index_no_contact.png", cv2.IMREAD_COLOR)
+new_index_bg = cv2.cvtColor(new_index_bg, cv2.COLOR_BGR2RGB)
+
+
+# plt.imshow(old_thumb_bg)
+# plt.show()
+# plt.imshow(new_thumb_bg)
+# plt.show()
+# exit()
 # ==================================================================================================
 
 
@@ -58,6 +69,7 @@ def numpy_to_binary(arr):
 # ==================================================================================================
 def bag2dataset(bag_id):
     path_bag = f"{PATH_ROSBAGS}/{bag_id}"
+    print(f"Reading {bag_id}.bag ...")
     msg_data = {k: [] for k in TOPICS_EXTRACT}
 
     read_messages(path_bag)
@@ -139,10 +151,12 @@ def bag2dataset(bag_id):
         "allegro_joint": [],
         "allegro_joint_vel": [],
         "timestamp": [],
+        "bg_index": [],
+        "bg_thumb": [],
         "step": [],
     }
 
-    # dataset["action"] = [np.zeros(7)]
+    dataset["action"] = [np.zeros(7)]
     dataset["allegro_action"] = [np.zeros(16)]
 
     # extract allegro joints
@@ -167,9 +181,9 @@ def bag2dataset(bag_id):
         dataset["robot_joint"].append(msg.position)
         dataset["robot_joint_vel"].append(msg.velocity)
 
-        # if i > 0:
-        #     action = dataset["robot_joint"][-1] - dataset["robot_joint"][-2]
-        #     dataset["action"].append(action)
+        if i > 0:
+            action = dataset["robot_joint"][-1] - dataset["robot_joint"][-2]
+            dataset["action"].append(action)
 
     urdf_path = "/home/akashsharma/workspace/projects/gum_ws/src/GUM/gum/devices/metahand/ros/meta_hand_description/urdf/meta_hand_franka.urdf"
     franka_urdf_chain = pk.build_serial_chain_from_urdf(
@@ -186,7 +200,7 @@ def bag2dataset(bag_id):
     franka_eef_pose = franka_eef_pose.get_matrix().numpy()
     franka_eef_position = franka_eef_pose[:, :3, 3]
     dataset["robot_eef_pose"] = franka_eef_position
-    dataset["action"] = franka_eef_position.copy()
+    # dataset["action"] = franka_eef_position.copy()
 
     # extract digit images (images are compressed)
     print("Extracting digit images ...")
@@ -194,12 +208,18 @@ def bag2dataset(bag_id):
         msg = sync_msg_data["/digit_thumb/compressed"][i]
         img_thumb = img_msg_to_array(msg)
         img_thumb = cv2.cvtColor(img_thumb, cv2.COLOR_BGR2RGB).astype("uint8")
-        dataset["digit_thumb"].append(img_thumb)
+        dataset["digit_thumb"].append(numpy_to_binary(img_thumb))
 
         msg = sync_msg_data["/digit_index/compressed"][i]
         img_index = img_msg_to_array(msg)
         img_index = cv2.cvtColor(img_index, cv2.COLOR_BGR2RGB).astype("uint8")
-        dataset["digit_index"].append(img_index)
+        dataset["digit_index"].append(numpy_to_binary(img_index))
+        if "new" in bag_id:
+            dataset["bg_index"].append(numpy_to_binary(new_index_bg))
+            dataset["bg_thumb"].append(numpy_to_binary(new_thumb_bg))
+        else:
+            dataset["bg_index"].append(numpy_to_binary(old_index_bg))
+            dataset["bg_thumb"].append(numpy_to_binary(old_thumb_bg))
 
     # extract realsense images (images are compressed)
     print("Extracting realsense images ...")
@@ -208,7 +228,7 @@ def bag2dataset(bag_id):
         img = img_msg_to_array(msg)
         # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype("uint8")
         img = img.astype("uint8")
-        dataset["realsense"].append(img)
+        dataset["realsense"].append(numpy_to_binary(img))
 
     # save dataset
     print("Saving dataset ... \n")
@@ -218,8 +238,12 @@ def bag2dataset(bag_id):
 
 def pickle2zarr(bag_id, buffer):
     # load dataset
-    with open(f"{PATH_OUTPUT}/{bag_id}", "rb") as f:
-        dataset = pickle.load(f)
+    try:
+        with open(f"{PATH_OUTPUT}/{bag_id}", "rb") as f:
+            dataset = pickle.load(f)
+    except Exception as e:
+        print(f"Error in {bag_id}: {e}")
+        return
 
     print(f"Adding the following keys from {bag_id}")
     for key in dataset.keys():
@@ -228,7 +252,10 @@ def pickle2zarr(bag_id, buffer):
     print("---")
     dataset["ep_id"] = np.array([bag_id] * len(dataset["step"]))
 
-    buffer.add_episode(dataset, compressors="disk")
+    try:
+        buffer.extend(dataset)  # , compressors="disk")
+    except Exception as e:
+        print(f"Error in creating episode: {repr(e)}")
 
 
 def check_zarr(buffer, episode=0):
@@ -238,7 +265,8 @@ def check_zarr(buffer, episode=0):
     for i in range(len(digit_index)):
         ax.clear()
         img = digit_index[i]
-        # img = Image.open(io.BytesIO(digit_index[i]))
+        img_buf = np.frombytes(img, np.uint8)
+        img = cv2.imdecode(img_buf, cv2.IMREAD_COLOR)
         ax.imshow(img)
         ax.axis("off")
         ax.set_title(f"Frame {i}")
@@ -274,7 +302,7 @@ def main():
     os.makedirs(PATH_OUPUT_ZARR, exist_ok=True)
 
     # extract dataset in pickle format
-    # convert2pickle()
+    convert2pickle()
 
     # convert pickle to zarr
     buffer = convert2zarr()

@@ -140,3 +140,5 @@ dmypy.json
 .pyre/
 checkpoints/
 dataset_pickle/
+dataset_pickle_new/
+dataset_pickle_new2/

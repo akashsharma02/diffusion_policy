@@ -55,6 +55,7 @@ class MLPPolicy(BaseImagePolicy):
             nn.Linear(256 * 4, 256),
             nn.ReLU(),
             nn.Linear(256, n_action_steps * action_dim),
+            nn.Tanh(),  # action is bounded between -1 and 1
         )
         self.obs_encoder = obs_encoder
 

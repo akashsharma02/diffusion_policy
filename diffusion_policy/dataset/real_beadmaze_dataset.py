@@ -13,6 +13,8 @@ import zarr
 from filelock import FileLock
 from omegaconf import OmegaConf
 from PIL import Image
+
+# ImageFile.LOAD_TRUNCATED_IMAGES = True
 from threadpoolctl import threadpool_limits
 from torchvision import transforms
 import pytorch_kinematics as pk
@@ -48,7 +50,8 @@ def compute_diff(img1, img2, offset=0.0):
     return diff
 
 
-def load_sample_from_buf(img, img_bg=None):
+def load_sample_from_buf(io_buf, img_bg=None):
+    img = load_bin_image(io_buf)
     if img_bg is not None:
         img = compute_diff(img, img_bg, offset=0.5)
     img = Image.fromarray(img)
@@ -56,8 +59,9 @@ def load_sample_from_buf(img, img_bg=None):
 
 
 def load_bin_image(io_buf):
-    img = Image.open(io.BytesIO(io_buf))
-    img = np.array(img)
+    img = np.frombuffer(io_buf, dtype=np.uint8)
+    img = cv2.imdecode(img, cv2.IMREAD_COLOR)
+    img = np.asarray(img)
     return img
 
 
@@ -129,6 +133,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
                 shape_meta=shape_meta,
                 store=zarr.MemoryStore(),
             )
+        print(f"replay_buffer keys: {replay_buffer['bg_thumb'][:].shape}")
 
         if delta_action:
             # replace action as relative to previous frame
@@ -147,6 +152,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
                 # to ensure consistency with positional mode
                 actions_diff[start + 1 : end] = np.diff(actions[start:end], axis=0)
             replay_buffer["action"][:] = actions_diff
+
         if delta_proprioception:
             # replace action as relative to previous frame
             actions = replay_buffer["robot_joint"][:]
@@ -163,7 +169,6 @@ class RealBeadMazeImageDataset(BaseImageDataset):
                 # it should be scheduled at the previous timestep for the current timestep
                 # to ensure consistency with positional mode
                 actions_diff[start + 1 : end] = np.diff(actions[start:end], axis=0)
-            print(f"actions_diff: {actions_diff}")
             replay_buffer["robot_joint"][:] = actions_diff
 
         rgb_keys = list()
@@ -199,14 +204,19 @@ class RealBeadMazeImageDataset(BaseImageDataset):
             episode_mask=train_mask,
             key_first_k=key_first_k,
         )
-        data = sampler.sample_sequence(0)
-        self.thumb_bg = load_sample_from_buf(data["digit_thumb"][0])
-        self.index_bg = load_sample_from_buf(data["digit_index"][0])
+        # data = sampler.sample_sequence(-1)
+        # self.thumb_bg = load_sample_from_buf(data["digit_thumb"][0])
+        # self.index_bg = load_sample_from_buf(data["digit_index"][0])
 
         self.replay_buffer = replay_buffer
         self.sampler = sampler
         self.shape_meta = shape_meta
-        self.rgb_keys = ["digit_thumb", "digit_index"]  # rgb_keys
+        self.rgb_keys = [
+            "digit_thumb",
+            "digit_index",
+            "bg_thumb",
+            "bg_index",
+        ]  # rgb_keys
         self.lowdim_keys = ["robot_joint"]  # , "allegro_joint"]  # lowdim_keys
         self.n_obs_steps = n_obs_steps
         self.val_mask = val_mask
@@ -249,13 +259,12 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         normalizer = LinearNormalizer()
 
         # action
-
         normalizer["action"] = SingleFieldLinearNormalizer.create_fit(
             self.replay_buffer["action"]
         )
-        normalizer["allegro_action"] = SingleFieldLinearNormalizer.create_fit(
-            self.replay_buffer["allegro_action"]
-        )
+        # normalizer["allegro_action"] = SingleFieldLinearNormalizer.create_fit(
+        #     self.replay_buffer["allegro_action"]
+        # )
 
         # obs
         for key in self.lowdim_keys:
@@ -303,18 +312,16 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         try:
             # threadpool_limits(1)
             data = self.sampler.sample_sequence(idx)
-            print(f"{len(data['digit_thumb'])}")
 
             T_slice = slice(self.n_obs_steps)
-            # T_slice = slice(self.horizon)
 
             obs_dict = dict()
             for key in self.rgb_keys:
                 bg = None
                 if key == "digit_thumb":
-                    bg = self.thumb_bg
+                    bg = self.img_loader(data["bg_thumb"][0], None)
                 elif key == "digit_index":
-                    bg = self.index_bg
+                    bg = self.img_loader(data["bg_index"][0], None)
                 obs_dict[key] = self._get_tactile_images(data[key], T_slice, bg=bg)
                 del data[key]
             for key in self.lowdim_keys:
@@ -336,7 +343,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
             }
             return torch_data
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error {idx}: {e}")
             return self.__getitem__(np.clip(idx + 1, 0, len(self) - 1))
 
 
@@ -411,29 +418,59 @@ def test():
     from matplotlib import pyplot as plt
 
     normalizer = dataset.get_normalizer()
-    nactions = normalizer["action"].normalize(dataset.replay_buffer["action"][:])
-    dists = np.linalg.norm(np.diff(nactions, axis=0), axis=-1)
-    # _ = plt.hist(dists, bins=100)
-    # plt.title("real action velocity")
-    # plt.show()
+    # input_stats = normalizer.get_input_stats()
+    # print(f"input_stats: {input_stats}")
+    # output_stats = normalizer.get_output_stats()
+    #
+    # for key, stat in input_stats.items():
+    #     print(f"{key}, {stat}")
+    #     for k, v in stat.items():
+    #         print(f"{k}: {v}")
+    # print("\n\n")
+    # for key, stat in output_stats.items():
+    #     print(f"{key}, {stat}")
+    #     for k, v in stat.items():
+    #         print(f"{k}: {v}")
 
-    # fig, ax = plt.subplots(1, 2, figsize=(10, 10))
+    # print(normalizer.get_output_stats())
+    nactions = dataset.replay_buffer["action"][:]
+    # print(f"nactions.min: {nactions.min()}, nactions.max: {nactions.max()}")
+    nactions = normalizer["action"].normalize(dataset.replay_buffer["action"][:])
+
+    # print(nactions.max(), nactions.min())
+    # dists = np.linalg.norm(nactions, axis=-1)
+    fig, axs = plt.subplots(1, nactions.shape[-1])
+    for i, ax in enumerate(axs):
+        ax.hist(nactions[:, i], bins=100)
+
+    # _ = plt.hist(dists, bins=100)
+    plt.title("real action velocity")
+    plt.show()
+    fig, ax = plt.subplots(2, 2, figsize=(10, 10))
     for i in range(len(dataset)):
-        # ax[0].cla()
-        # ax[1].cla()
+        ax[0, 0].cla()
+        ax[0, 1].cla()
+        ax[1, 0].cla()
+        ax[1, 1].cla()
 
         torch_data = dataset[i]
         img = torch_data["obs"]["digit_index"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
-        # ax[0].imshow(img)
-        # ax[0].set_title(f"Index idx: {i}")
+        ax[0, 0].imshow(img)
+        ax[0, 0].set_title(f"Index idx: {i}")
+
+        img = torch_data["obs"]["bg_index"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
+        ax[0, 1].imshow(img)
+        ax[0, 1].set_title(f"Index idx: {i}")
 
         img = torch_data["obs"]["digit_thumb"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
-        print(f"img.shape: {img.shape}")
-        # ax[1].imshow(img)
-        # ax[1].set_title(f"Thumb idx: {i}")
+        ax[1, 0].imshow(img)
+        ax[1, 0].set_title(f"Thumb idx: {i}")
+
+        img = torch_data["obs"]["bg_thumb"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
+        ax[1, 1].imshow(img)
+        ax[1, 1].set_title(f"Thumb idx: {i}")
 
         plt.pause(0.01)
-        input()
     plt.show()
     print("done")
 

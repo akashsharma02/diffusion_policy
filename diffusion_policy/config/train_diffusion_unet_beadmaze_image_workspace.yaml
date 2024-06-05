@@ -9,9 +9,9 @@ task_name: ${task.name}
 shape_meta: ${task.shape_meta}
 exp_name: "default"
 
-horizon: 8
+horizon: 16
 n_obs_steps: 2
-n_action_steps: 5
+n_action_steps: 8
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -40,7 +40,7 @@ policy:
     beta_end: 0.02
     # beta_schedule is important
     # this is the best we found
-    beta_schedule: squaredcos_cap_v2
+    beta_schedule: linear #squaredcos_cap_v2
     clip_sample: True
     set_alpha_to_one: True
     steps_offset: 0
@@ -54,7 +54,7 @@ policy:
       pos_embed_fn: sinusoidal
     embed_dim: 768
     checkpoint_encoder: "checkpoints/gelsight_ijepa_vitbase.pth"
-    train_encoder: False
+    train_encoder: False # False
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
@@ -84,14 +84,14 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 64
+  batch_size: 16
   num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 64
+  batch_size: 16
   num_workers: 8
   shuffle: False
   pin_memory: True

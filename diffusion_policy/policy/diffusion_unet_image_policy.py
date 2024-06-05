@@ -15,7 +15,6 @@ from diffusion_policy.model.vision.multi_image_obs_encoder import MultiImageObsE
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 
 
-
 class DiffusionUnetImagePolicy(BaseImagePolicy):
     def __init__(
         self,
