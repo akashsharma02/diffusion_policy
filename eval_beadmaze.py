@@ -112,6 +112,7 @@ def main(ckpt_path: str, urdf_path: str):
     dataset = None
     with hydra.initialize("./diffusion_policy/config"):
         cfg = hydra.compose("train_diffusion_unet_beadmaze_image_workspace")
+        # cfg = hydra.compose("train_mlp_beadmaze_workspace")
         OmegaConf.resolve(cfg)
         dataset = hydra.utils.instantiate(cfg.task.dataset)
     assert dataset is not None

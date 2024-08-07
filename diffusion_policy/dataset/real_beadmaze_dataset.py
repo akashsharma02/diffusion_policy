@@ -133,7 +133,7 @@ class RealBeadMazeImageDataset(BaseImageDataset):
                 shape_meta=shape_meta,
                 store=zarr.MemoryStore(),
             )
-        print(f"replay_buffer keys: {replay_buffer['bg_thumb'][:].shape}")
+        # print(f"replay_buffer keys: {replay_buffer['bg_thumb'][:].shape}")
 
         if delta_action:
             # replace action as relative to previous frame

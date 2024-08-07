@@ -109,5 +109,5 @@ class TactileObsEncoder(ModuleAttrMixin):
 
     @torch.no_grad()
     def output_shape(self):
-        out_dim = (self.embed_dim * 2) + 7
+        out_dim = (self.embed_dim * 2) + 16 + 7
         return (out_dim,)

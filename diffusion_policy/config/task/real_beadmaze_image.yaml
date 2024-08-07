@@ -1,7 +1,7 @@
 name: real_image
 
 image_shape: [3, 240, 320]
-dataset_path: data/bead_maze_new2
+dataset_path: data/bead_maze
 
 shape_meta: &shape_meta # acceptable types: rgb, low_dim
   obs:
@@ -20,13 +20,13 @@ shape_meta: &shape_meta # acceptable types: rgb, low_dim
     robot_joint:
       shape: [7]
       type: low_dim
-    # allegro_joint:
-    #   shape: [16]
-    #   type: low_dim
+    allegro_joint:
+      shape: [16]
+      type: low_dim
   action:
     shape: [7]
-  # allegro_action:
-  #   shape: [16]
+  allegro_action:
+    shape: [16]
 
 env_runner:
   _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
