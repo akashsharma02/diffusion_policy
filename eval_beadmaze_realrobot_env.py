@@ -4,8 +4,8 @@ import time
 
 import hydra
 import numpy as np
-from data_clients.data_client import DataClient
 from data_clients.env import Env, ActionCmd
+from data_clients.data_client import DataClient
 from omegaconf import OmegaConf
 import einops
 import torch
@@ -192,7 +192,6 @@ def main(cfg):
             # pred_cart_pos = np.array([0.470, -0.022, 0.5])
             # pred_cart_quat = np.array([-0.652, -0.225, -0.283, 0.666])
             env_action_cmd = ActionCmd()
-            print(pred_cart_pos.dtype, pred_cart_quat.dtype)
             # env_action_cmd.set_franka_jnt_ctrl(this_target_joint)
             env_action_cmd.set_franka_cart_ctrl(pred_cart_pos, pred_cart_quat)
             # env_action_cmd.set_metahand_pos_ctrl(target_metahand_position)

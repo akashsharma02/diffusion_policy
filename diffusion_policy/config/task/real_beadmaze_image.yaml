@@ -11,12 +11,12 @@ shape_meta: &shape_meta # acceptable types: rgb, low_dim
     digit_index:
       shape: [1]
       type: low_dim
-    bg_thumb:
-      shape: [1]
-      type: low_dim
-    bg_index:
-      shape: [1]
-      type: low_dim
+    # bg_thumb:
+    #   shape: [1]
+    #   type: low_dim
+    # bg_index:
+    #   shape: [1]
+    #   type: low_dim
     robot_joint:
       shape: [7]
       type: low_dim

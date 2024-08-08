@@ -102,8 +102,6 @@ class ConditionalUnet1D(nn.Module):
         cond_dim = dsed
         if global_cond_dim is not None:
             cond_dim += global_cond_dim
-        print(f"dsed: {dsed}, {global_cond_dim}")
-        print(f"cond_dim: {cond_dim}")
 
         in_out = list(zip(all_dims[:-1], all_dims[1:]))
 

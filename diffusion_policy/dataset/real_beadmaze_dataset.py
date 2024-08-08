@@ -133,8 +133,6 @@ class RealBeadMazeImageDataset(BaseImageDataset):
                 shape_meta=shape_meta,
                 store=zarr.MemoryStore(),
             )
-        # print(f"replay_buffer keys: {replay_buffer['bg_thumb'][:].shape}")
-
         if delta_action:
             # replace action as relative to previous frame
             actions = replay_buffer["action"][:]
@@ -204,9 +202,19 @@ class RealBeadMazeImageDataset(BaseImageDataset):
             episode_mask=train_mask,
             key_first_k=key_first_k,
         )
-        # data = sampler.sample_sequence(-1)
-        # self.thumb_bg = load_sample_from_buf(data["digit_thumb"][0])
-        # self.index_bg = load_sample_from_buf(data["digit_index"][0])
+
+        # These are the new background images for the bead_maze dataset with single pattern. Use this for real evaluation
+        self.thumb_bg = cv2.cvtColor(
+            cv2.imread("./digit_thumb_no_contact.png", cv2.IMREAD_COLOR),
+            cv2.COLOR_BGR2RGB,
+        )
+        self.index_bg = cv2.cvtColor(
+            cv2.imread("./digit_index_no_contact.png", cv2.IMREAD_COLOR),
+            cv2.COLOR_BGR2RGB,
+        )
+        # These are the old background images for the bead_maze dataset with single pattern. I had to replace the thumb gel with a new one
+        # self.thumb_bg = cv2.imread("./digit_thumb.jpg", cv2.IMREAD_COLOR)
+        # self.index_bg = cv2.imread("./digit_index.jpg", cv2.IMREAD_COLOR)
 
         self.replay_buffer = replay_buffer
         self.sampler = sampler
@@ -214,10 +222,8 @@ class RealBeadMazeImageDataset(BaseImageDataset):
         self.rgb_keys = [
             "digit_thumb",
             "digit_index",
-            "bg_thumb",
-            "bg_index",
-        ]  # rgb_keys
-        self.lowdim_keys = ["robot_joint"]  # , "allegro_joint"]  # lowdim_keys
+        ]
+        self.lowdim_keys = ["robot_joint", "allegro_joint"]  # lowdim_keys
         self.n_obs_steps = n_obs_steps
         self.val_mask = val_mask
         self.horizon = horizon
@@ -319,14 +325,12 @@ class RealBeadMazeImageDataset(BaseImageDataset):
             for key in self.rgb_keys:
                 bg = None
                 if key == "digit_thumb":
-                    bg = self.img_loader(data["bg_thumb"][0], None)
+                    bg = self.thumb_bg
                 elif key == "digit_index":
-                    bg = self.img_loader(data["bg_index"][0], None)
+                    bg = self.index_bg
                 obs_dict[key] = self._get_tactile_images(data[key], T_slice, bg=bg)
-                del data[key]
             for key in self.lowdim_keys:
                 obs_dict[key] = data[key][T_slice].astype(np.float32)
-                del data[key]
 
             action = data["action"].astype(np.float32)
             allegro_action = data["allegro_action"].astype(np.float32)
@@ -446,29 +450,19 @@ def test():
     # _ = plt.hist(dists, bins=100)
     plt.title("real action velocity")
     plt.show()
-    fig, ax = plt.subplots(2, 2, figsize=(10, 10))
+    fig, ax = plt.subplots(1, 2, figsize=(5, 10))
     for i in range(len(dataset)):
-        ax[0, 0].cla()
-        ax[0, 1].cla()
-        ax[1, 0].cla()
-        ax[1, 1].cla()
+        ax[0].cla()
+        ax[1].cla()
 
         torch_data = dataset[i]
         img = torch_data["obs"]["digit_index"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
-        ax[0, 0].imshow(img)
-        ax[0, 0].set_title(f"Index idx: {i}")
-
-        img = torch_data["obs"]["bg_index"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
-        ax[0, 1].imshow(img)
-        ax[0, 1].set_title(f"Index idx: {i}")
+        ax[0].imshow(img)
+        ax[0].set_title(f"Index idx: {i}")
 
         img = torch_data["obs"]["digit_thumb"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
-        ax[1, 0].imshow(img)
-        ax[1, 0].set_title(f"Thumb idx: {i}")
-
-        img = torch_data["obs"]["bg_thumb"][0].permute(1, 2, 0).numpy()[:, :, 0:3]
-        ax[1, 1].imshow(img)
-        ax[1, 1].set_title(f"Thumb idx: {i}")
+        ax[1].imshow(img)
+        ax[1].set_title(f"Thumb idx: {i}")
 
         plt.pause(0.01)
     plt.show()

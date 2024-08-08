@@ -43,8 +43,9 @@ class TactileObsEncoder(ModuleAttrMixin):
         self.train_encoder: bool = train_encoder
 
         self.rgb_keys = ["digit_thumb", "digit_index"]
-        self.low_dim_keys = ["robot_joint"]  # , "allegro_joint"]
+        self.low_dim_keys = ["robot_joint", "allegro_joint"]
 
+        print(f"checkpoint_encoder: {checkpoint_encoder}")
         if checkpoint_encoder is not None:
             self.load_tactile_encoder(checkpoint_encoder)
             print(f"Tactile encoder loaded successfully from {checkpoint_encoder}")

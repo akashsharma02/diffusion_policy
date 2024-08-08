@@ -19,6 +19,7 @@ import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import JointState, CompressedImage
+from franky_msgs.msg import JointPosition
 from std_msgs.msg import Header
 import cv2
 
@@ -123,7 +124,7 @@ class DiffusionPolicyNode(Node):
             1,
         )
         self.joint_state_publisher = self.create_publisher(
-            JointState, self.config.joint_cmd_topic, 1
+            JointPosition, self.config.joint_cmd_topic, 1
         )
 
         index_nocontact_image = cv2.imread("./digit_index_no_contact.png")
@@ -202,11 +203,6 @@ class DiffusionPolicyNode(Node):
 
         index_digits = [d for d in self.index_digit_queue]
         thumb_digits = [d for d in self.thumb_digit_queue]
-        # index_digits = self.index_digit_queue.index(-num_required_frames,
-        # thumb_digits = self.thumb_digit_queue[-num_required_frames:]
-
-        # latest_index_timestamp = index_digits[-1][0]
-        # latest_thumb_timestamp = thumb_digits[-1][0]
 
         index_observations = []
         thumb_observations = []
@@ -245,16 +241,12 @@ class DiffusionPolicyNode(Node):
         index_observations = np.moveaxis(index_observations, -1, 1)
         thumb_observations = np.moveaxis(thumb_observations, -1, 1)
         joint_observations = joint_states[this_idxs]
-        # print(
-        #     index_observations.shape, thumb_observations.shape, joint_observations.shape
-        # )
 
         obs_dict = {}
         obs_dict["digit_index"] = index_observations
         obs_dict["digit_thumb"] = thumb_observations
         obs_dict["robot_joint"] = joint_observations[:, :7]
         obs_dict["allegro_joint"] = joint_observations[:, 7:]
-        # obs_dict["timestamp"] = np.array(index_timestamps)
         return True, obs_dict
 
     def on_timer(self):
@@ -271,31 +263,35 @@ class DiffusionPolicyNode(Node):
             )
             result = self.policy.predict_action(obs_dict)
             action = result["action"][0].detach().to("cpu").numpy()
+            print(f"action: {action}")
             print(f"Inference latency: {time.time() - s}")
 
         if self.prev_target_joint is None:
             self.prev_target_joint = obs_dict_np["robot_joint"][-1]
         executable_action = self.prev_target_joint.copy() + action[0]
-        # executable_action = obs_dict_np["robot_joint"][-1] + action[-1]
 
         header = Header(stamp=self.get_clock().now().to_msg())
-        msg = JointState(
-            header=header, position=executable_action, velocity=[], effort=[]
+        joint_position_msg = JointPosition(
+            header=header,
+            dynamics_factor=0.1,
+            position=executable_action,
         )
-        self.joint_state_publisher.publish(msg)
 
+        self.joint_state_publisher.publish(joint_position_msg)
         self.prev_target_joint = executable_action
-        input()
+        # input()
 
 
 def main():
     rclpy.init()
     config = OmegaConf.create(
         {
-            "ckpt_path": "./checkpoints/dino_unet_bugfix/latest-006.ckpt",
+            # "ckpt_path": "./checkpoints/e2e_unet_bugfix/epoch=0060-train_loss=0.010-004.ckpt",  # best checkpoint
+            "ckpt_path": "./checkpoints/e2e_unet_bugfix/latest-001.ckpt",
+            # "ckpt_path": "./checkpoints/ijepa_unet_bugfix/latest-005.ckpt",
             "urdf_path": "../GUM/gum/devices/metahand/ros/meta_hand_description/urdf/meta_hand_franka.urdf",
-            "index_topic": "/digit_index/compressed",
-            "thumb_topic": "/digit_thumb/compressed",
+            "index_topic": "/digit/digit_index/compressed",
+            "thumb_topic": "/digit/digit_thumb/compressed",
             "joint_state_topic": "/joint_states",
             "joint_cmd_topic": "/joint_pos_cmd",
             "digit_fps": 30,
@@ -304,7 +300,6 @@ def main():
         }
     )
     OmegaConf.register_new_resolver("eval", eval, replace=True)
-    # config = OmegaConf.resolve(config)
     device = (
         torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     )
@@ -318,8 +313,7 @@ def main():
     payload = torch.load(open(config.ckpt_path, "rb"), pickle_module=dill)
     cfg = payload["cfg"]
     cls = hydra.utils.get_class(cfg._target_)
-    workspace = cls(cfg)
-    workspace: BaseWorkspace
+    workspace: BaseWorkspace = cls(cfg)
     workspace.load_payload(payload, exclude_keys=None, include_keys=None)
 
     policy = workspace.model
